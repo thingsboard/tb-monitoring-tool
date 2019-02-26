@@ -109,7 +109,7 @@ public abstract class BaseDeviceAPITest implements DeviceAPITest {
             scheduledExecutor.scheduleAtFixedRate(() -> {
                 if (sendEmail) {
                     log.info("Sending an email in case of some troubles with the TB!");
-//                    emailService.sendAlertEmail();
+                    emailService.sendAlertEmail();
                     sendEmail = false;
                 }
             }, 0, 30, TimeUnit.MINUTES);
