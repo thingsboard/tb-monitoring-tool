@@ -120,8 +120,9 @@ public abstract class BaseDeviceAPITest implements DeviceAPITest {
 
         scheduledExecutor.scheduleAtFixedRate(() -> {
             for (Map.Entry<Integer, TbCheckTask> entry : subscriptionsMap.entrySet()) {
-                long taskStartTs = entry.getValue().getStartTs();
-                if (!entry.getValue().isDone() && getCurrentTs() - taskStartTs > duration) {
+                TbCheckTask task = entry.getValue();
+                if (!task.isDone() && getCurrentTs() - task.getStartTs() > duration) {
+                    task.setDone(true);
                     sendEmail = true;
                 }
             }
