@@ -64,7 +64,7 @@ public class RuleChainManager {
         try {
             JsonNode updatedRootRuleChainConfig = objectMapper.readTree(this.getClass().getClassLoader().getResourceAsStream("root_rule_chain.json"));
             RuleChain ruleChain = objectMapper.treeToValue(updatedRootRuleChainConfig.get("ruleChain"), RuleChain.class);
-            updatedRuleChainId = saveUpdatedRootRuleChainAndSetAsRoot(ruleChain);
+            updatedRuleChainId = saveUpdatedRootRuleChain(ruleChain);
             setRootRuleChain(updatedRuleChainId);
 
             RuleChainMetaData ruleChainMetaData = objectMapper.treeToValue(updatedRootRuleChainConfig.get("metadata"), RuleChainMetaData.class);
@@ -76,7 +76,7 @@ public class RuleChainManager {
         }
     }
 
-    public void revertRootNodeAndCleanUp() {
+    public void revertRootRuleChainAndCleanUp() {
         restClient.login(username, password);
         setRootRuleChain(defaultRootRuleChainId);
         restClient.getRestTemplate().delete(restUrl + "/api/ruleChain/" + updatedRuleChainId.getId());
@@ -87,7 +87,7 @@ public class RuleChainManager {
                 .postForEntity(restUrl + "/api/ruleChain/" + rootRuleChain.getId() + "/root", null, RuleChain.class);
     }
 
-    private RuleChainId saveUpdatedRootRuleChainAndSetAsRoot(RuleChain updatedRuleChain) {
+    private RuleChainId saveUpdatedRootRuleChain(RuleChain updatedRuleChain) {
         ResponseEntity<RuleChain> ruleChainResponse = restClient.getRestTemplate()
                 .postForEntity(restUrl + "/api/ruleChain", updatedRuleChain, RuleChain.class);
 

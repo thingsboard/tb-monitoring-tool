@@ -91,7 +91,7 @@ public abstract class BaseDeviceAPITest implements DeviceAPITest {
     final ScheduledExecutorService scheduledApiExecutor = Executors.newScheduledThreadPool(10);
     final ScheduledExecutorService scheduledExecutor = Executors.newScheduledThreadPool(10);
 
-    final Map<Integer, Long> subscriptionsMap = new ConcurrentHashMap<>();
+    final Map<Integer, TbCheckTask> subscriptionsMap = new ConcurrentHashMap<>();
     final Map<String, Integer> deviceSubIdsMap = new ConcurrentHashMap<>();
 
     private final List<DeviceId> deviceIds = Collections.synchronizedList(new ArrayList<>());
@@ -112,23 +112,31 @@ public abstract class BaseDeviceAPITest implements DeviceAPITest {
 //                    emailService.sendAlertEmail();
                     sendEmail = false;
                 }
-            }, 0, 15, TimeUnit.SECONDS);
+            }, 0, 30, TimeUnit.MINUTES);
         } catch (URISyntaxException e) {
             log.error("Bad URI provided...", e);
         }
         scheduledExecutor.scheduleAtFixedRate(() -> emailService.sendStatusEmail(), 1, 12, TimeUnit.HOURS);
+
+        scheduledExecutor.scheduleAtFixedRate(() -> {
+            for (Map.Entry<Integer, TbCheckTask> entry : subscriptionsMap.entrySet()) {
+                long taskStartTs = entry.getValue().getStartTs();
+                if (!entry.getValue().isDone() && getCurrentTs() - taskStartTs > duration) {
+                    sendEmail = true;
+                }
+            }
+        }, 0, 15, TimeUnit.SECONDS);
     }
 
     private void handleWebSocketMsg() {
         clientEndPoint.addMessageHandler(message -> {
             log.info("Arrived message via WebSocket: {}", message);
             try {
-                long currTs = System.currentTimeMillis();
-
                 int subscriptionId = mapper.readTree(message).get("subscriptionId").asInt();
                 if (subscriptionsMap.containsKey(subscriptionId)) {
-                    long taskStartTs = subscriptionsMap.get(subscriptionId);
-                    sendEmail = currTs - taskStartTs > duration;
+                    TbCheckTask task = subscriptionsMap.get(subscriptionId);
+                    task.setDone(true);
+                    sendEmail = getCurrentTs() - task.getStartTs() > duration;
                 }
             } catch (IOException e) {
                 log.warn("Failed to read message to json {}", message);
@@ -139,6 +147,9 @@ public abstract class BaseDeviceAPITest implements DeviceAPITest {
     void destroy() {
         if (!this.httpExecutor.isShutdown()) {
             this.httpExecutor.shutdown();
+        }
+        if (!this.scheduledExecutor.isShutdown()) {
+            this.scheduledExecutor.shutdown();
         }
     }
 
@@ -183,7 +194,8 @@ public abstract class BaseDeviceAPITest implements DeviceAPITest {
         ScheduledFuture<?> tokenRefreshScheduleFuture = scheduledExecutor.scheduleAtFixedRate(() -> {
             try {
                 restClient.login(username, password);
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
         }, 10, 10, TimeUnit.MINUTES);
 
         latch.await();
@@ -221,7 +233,8 @@ public abstract class BaseDeviceAPITest implements DeviceAPITest {
         ScheduledFuture<?> tokenRefreshScheduleFuture = scheduledExecutor.scheduleAtFixedRate(() -> {
             try {
                 restClient.login(username, password);
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
         }, 10, 10, TimeUnit.MINUTES);
 
         latch.await();
@@ -276,6 +289,10 @@ public abstract class BaseDeviceAPITest implements DeviceAPITest {
 
     private int getRandomValue(int min, int max) {
         return (int) (Math.random() * ((max - min) + 1)) + min;
+    }
+
+    long getCurrentTs() {
+        return System.currentTimeMillis();
     }
 
 }

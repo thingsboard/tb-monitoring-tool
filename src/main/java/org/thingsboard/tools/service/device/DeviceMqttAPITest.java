@@ -33,6 +33,8 @@ import javax.annotation.PreDestroy;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -57,6 +59,7 @@ public class DeviceMqttAPITest extends BaseDeviceAPITest {
     private final ScheduledExecutorService warmUpExecutor = Executors.newScheduledThreadPool(10);
 
     private final List<MqttClient> mqttClients = Collections.synchronizedList(new ArrayList<>());
+    private final Map<MqttClient, String> mqttClientsMap = new ConcurrentHashMap<>();
 
     private EventLoopGroup EVENT_LOOP_GROUP;
 
@@ -119,22 +122,17 @@ public class DeviceMqttAPITest extends BaseDeviceAPITest {
             final int delayPause = (int) ((double) publishTelemetryPause / mqttClients.size() * i);
             i++;
             scheduledApiExecutor.scheduleAtFixedRate(() -> {
-                try {
-                    mqttClient.publish("v1/devices/me/telemetry", Unpooled.wrappedBuffer(generateByteData()), MqttQoS.AT_LEAST_ONCE)
-                            .addListener(future -> {
-                                        if (future.isSuccess()) {
-                                            successPublishedCount.getAndIncrement();
-                                            log.debug("Message was successfully published to device: {}", mqttClient.getClientConfig().getUsername());
-                                        } else {
-                                            failedPublishedCount.getAndIncrement();
-                                            log.error("Error while publishing message to device: {}", mqttClient.getClientConfig().getUsername());
-                                        }
-                                    }
-                            );
-                } catch (Exception e) {
-                    failedPublishedCount.getAndIncrement();
-                } finally {
-                    totalPublishedCount.getAndIncrement();
+                String token = mqttClientsMap.get(mqttClient);
+                int subscriptionId = deviceSubIdsMap.get(token);
+                if (subscriptionsMap.containsKey(subscriptionId)) {
+                    TbCheckTask task = subscriptionsMap.get(subscriptionId);
+                    if (task.isDone()) {
+                        publishMessage(totalPublishedCount, successPublishedCount, failedPublishedCount, mqttClient,
+                                subscriptionId);
+                    }
+                } else {
+                    publishMessage(totalPublishedCount, successPublishedCount, failedPublishedCount, mqttClient,
+                            subscriptionId);
                 }
             }, delayPause, publishTelemetryPause, TimeUnit.MILLISECONDS);
         }
@@ -155,6 +153,28 @@ public class DeviceMqttAPITest extends BaseDeviceAPITest {
         log.info("{} messages were published successfully, {} failed!", successPublishedCount.get(), failedPublishedCount.get());
     }
 
+    private void publishMessage(AtomicInteger totalPublishedCount, AtomicInteger successPublishedCount, AtomicInteger failedPublishedCount,
+                                MqttClient mqttClient, int subscriptionId) {
+        subscriptionsMap.put(subscriptionId, new TbCheckTask(getCurrentTs(), false));
+        try {
+            mqttClient.publish("v1/devices/me/telemetry", Unpooled.wrappedBuffer(generateByteData()), MqttQoS.AT_LEAST_ONCE)
+                    .addListener(future -> {
+                                if (future.isSuccess()) {
+                                    successPublishedCount.getAndIncrement();
+                                    log.debug("Message was successfully published to device: {}", mqttClient.getClientConfig().getUsername());
+                                } else {
+                                    failedPublishedCount.getAndIncrement();
+                                    log.error("Error while publishing message to device: {}", mqttClient.getClientConfig().getUsername());
+                                }
+                            }
+                    );
+        } catch (Exception e) {
+            failedPublishedCount.getAndIncrement();
+        } finally {
+            totalPublishedCount.getAndIncrement();
+        }
+    }
+
     @Override
     public void warmUpDevices(final int publishTelemetryPause) throws InterruptedException {
         log.info("Connecting {} devices...", deviceCount);
@@ -168,7 +188,9 @@ public class DeviceMqttAPITest extends BaseDeviceAPITest {
             warmUpExecutor.schedule(() -> {
                 try {
                     String token = getToken(tokenNumber);
-                    mqttClients.add(initClient(token));
+                    MqttClient client = initClient(token);
+                    mqttClientsMap.putIfAbsent(client, token);
+                    mqttClients.add(client);
                 } catch (Exception e) {
                     log.error("Error while connect device", e);
                 } finally {
