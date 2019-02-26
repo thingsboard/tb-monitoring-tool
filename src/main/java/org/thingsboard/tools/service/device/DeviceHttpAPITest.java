@@ -73,17 +73,21 @@ public class DeviceHttpAPITest extends BaseDeviceAPITest {
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        HttpEntity<String> entity = new HttpEntity<>(dataAsStr, headers);
 
         int idx = 0;
         for (int i = deviceStartIdx; i < deviceEndIdx; i++) {
             final int tokenNumber = i;
             final int delayPause = (int) ((double) publishTelemetryPause / deviceCount * idx);
             idx++;
-            schedulerExecutor.scheduleAtFixedRate(() -> {
+            scheduledApiExecutor.scheduleAtFixedRate(() -> {
                 try {
                     String token = getToken(tokenNumber);
                     String url = restUrl + "/api/v1/" + token + "/telemetry";
+                    HttpEntity<String> entity = new HttpEntity<>(generateStrData(), headers);
+
+                    int subscriptionId = deviceSubIdsMap.get(token);
+                    subscriptionsMap.put(subscriptionId, System.currentTimeMillis());
+
                     ListenableFuture<ResponseEntity<Void>> future = httpClient.exchange(url, HttpMethod.POST, entity, Void.class);
                     future.addCallback(new ListenableFutureCallback<ResponseEntity>() {
                         @Override
@@ -110,7 +114,7 @@ public class DeviceHttpAPITest extends BaseDeviceAPITest {
             }, delayPause, publishTelemetryPause, TimeUnit.MILLISECONDS);
         }
 
-        ScheduledFuture<?> scheduledLogFuture = schedulerLogExecutor.scheduleAtFixedRate(() -> {
+        ScheduledFuture<?> scheduledLogFuture = scheduledExecutor.scheduleAtFixedRate(() -> {
             try {
                 log.info("[{}] messages have been published successfully. [{}] failed. [{}] total.",
                         successPublishedCount.get(), failedPublishedCount.get(), totalMessagesToPublish);
@@ -120,7 +124,7 @@ public class DeviceHttpAPITest extends BaseDeviceAPITest {
 
         Thread.sleep(maxDelay);
         scheduledLogFuture.cancel(true);
-        schedulerExecutor.shutdownNow();
+        scheduledApiExecutor.shutdownNow();
 
         log.info("Performance test was completed for {} devices!", deviceCount);
         log.info("{} messages were published successfully, {} failed!", successPublishedCount.get(), failedPublishedCount.get());
@@ -139,7 +143,7 @@ public class DeviceHttpAPITest extends BaseDeviceAPITest {
                     String token = getToken(tokenNumber);
                     restClient.getRestTemplate()
                             .postForEntity(restUrl + "/api/v1/{token}/telemetry",
-                                    mapper.readTree(dataAsStr),
+                                    mapper.readTree(generateStrData()),
                                     ResponseEntity.class,
                                     token);
                 } catch (Exception e) {
@@ -151,7 +155,7 @@ public class DeviceHttpAPITest extends BaseDeviceAPITest {
             });
         }
 
-        ScheduledFuture<?> scheduledLogFuture = schedulerLogExecutor.scheduleAtFixedRate(() -> {
+        ScheduledFuture<?> scheduledLogFuture = scheduledExecutor.scheduleAtFixedRate(() -> {
             try {
                 log.info("[{}] devices have been warmed up!", totalWarmedUpCount.get());
             } catch (Exception ignored) {

@@ -43,7 +43,8 @@
         <pkg.unixLogFolder>/var/log/${pkg.name}</pkg.unixLogFolder>
         <pkg.installFolder>/usr/share/${pkg.name}</pkg.installFolder>
         <pkg.win.dist>${project.build.directory}/windows</pkg.win.dist>
-        <thingsboard.version>2.2.0-SNAPSHOT</thingsboard.version>
+        <thingsboard.version>2.3.1-SNAPSHOT</thingsboard.version>
+        <mail.version>1.5.0-b01</mail.version>
         <docker.repo>thingsboard</docker.repo>
         <tb-performance-test.docker.name>tb-performance-test</tb-performance-test.docker.name>
     </properties>
@@ -107,6 +108,11 @@
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-lang3</artifactId>
             <version>${commons-lang3.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>javax.mail</groupId>
+            <artifactId>mail</artifactId>
+            <version>${mail.version}</version>
         </dependency>
     </dependencies>
 
@@ -233,29 +239,29 @@
                 </executions>
             </plugin>
             <!--<plugin>-->
-                <!--<groupId>org.apache.maven.plugins</groupId>-->
-                <!--<artifactId>maven-dependency-plugin</artifactId>-->
-                <!--<executions>-->
-                    <!--<execution>-->
-                        <!--<id>copy-tb-deb</id>-->
-                        <!--<phase>package</phase>-->
-                        <!--<goals>-->
-                            <!--<goal>copy</goal>-->
-                        <!--</goals>-->
-                        <!--<configuration>-->
-                            <!--<artifactItems>-->
-                                <!--<artifactItem>-->
-                                    <!--<groupId>org.thingsboard</groupId>-->
-                                    <!--<artifactId>application</artifactId>-->
-                                    <!--<classifier>deb</classifier>-->
-                                    <!--<type>deb</type>-->
-                                    <!--<destFileName>${pkg.name}.deb</destFileName>-->
-                                    <!--<outputDirectory>${project.build.directory}/docker-tb</outputDirectory>-->
-                                <!--</artifactItem>-->
-                            <!--</artifactItems>-->
-                        <!--</configuration>-->
-                    <!--</execution>-->
-                <!--</executions>-->
+            <!--<groupId>org.apache.maven.plugins</groupId>-->
+            <!--<artifactId>maven-dependency-plugin</artifactId>-->
+            <!--<executions>-->
+            <!--<execution>-->
+            <!--<id>copy-tb-deb</id>-->
+            <!--<phase>package</phase>-->
+            <!--<goals>-->
+            <!--<goal>copy</goal>-->
+            <!--</goals>-->
+            <!--<configuration>-->
+            <!--<artifactItems>-->
+            <!--<artifactItem>-->
+            <!--<groupId>org.thingsboard</groupId>-->
+            <!--<artifactId>application</artifactId>-->
+            <!--<classifier>deb</classifier>-->
+            <!--<type>deb</type>-->
+            <!--<destFileName>${pkg.name}.deb</destFileName>-->
+            <!--<outputDirectory>${project.build.directory}/docker-tb</outputDirectory>-->
+            <!--</artifactItem>-->
+            <!--</artifactItems>-->
+            <!--</configuration>-->
+            <!--</execution>-->
+            <!--</executions>-->
             <!--</plugin>-->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -433,7 +439,8 @@
                     <args>
                         <arg>-PprojectBuildDir=${project.build.directory}</arg>
                         <arg>-PprojectVersion=${project.version}</arg>
-                        <arg>-PmainJar=${project.build.directory}/${project.build.finalName}-boot.${project.packaging}</arg>
+                        <arg>-PmainJar=${project.build.directory}/${project.build.finalName}-boot.${project.packaging}
+                        </arg>
                         <arg>-PpkgName=${pkg.name}</arg>
                         <arg>-PpkgUser=${pkg.user}</arg>
                         <arg>-PpkgInstallFolder=${pkg.installFolder}</arg>

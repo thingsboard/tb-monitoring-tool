@@ -59,21 +59,15 @@ public class TestExecutor {
             deviceAPITest.createDevices();
         }
 
-        deviceAPITest.warmUpDevices(publishTelemetryPause);
+        deviceAPITest.subscribeWebSockets();
 
         ruleChainManager.createRuleChainWithCountNodeAndSetAsRoot();
 
-        statisticsCollector.start();
-
         deviceAPITest.runApiTests(publishTelemetryCount, publishTelemetryPause);
-
-        statisticsCollector.end();
 
         Thread.sleep(3000); // wait for messages delivery before removing rule chain
 
         ruleChainManager.revertRootNodeAndCleanUp();
-
-        statisticsCollector.printResults();
 
         if (deviceDeleteOnComplete) {
             deviceAPITest.removeDevices();

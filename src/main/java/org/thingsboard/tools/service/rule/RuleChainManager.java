@@ -59,7 +59,7 @@ public class RuleChainManager {
 
         defaultRootRuleChainId = getDefaultRuleChainId();
 
-        deleteAllPreviousPerformanceTestRuleChains();
+        deleteAllPreviousTbStatusCheckRuleChains();
 
         try {
             JsonNode updatedRootRuleChainConfig = objectMapper.readTree(this.getClass().getClassLoader().getResourceAsStream("root_rule_chain.json"));
@@ -101,13 +101,14 @@ public class RuleChainManager {
                         RuleChainMetaData.class);
     }
 
-    private void deleteAllPreviousPerformanceTestRuleChains() {
+    private void deleteAllPreviousTbStatusCheckRuleChains() {
         ResponseEntity<TextPageData<RuleChain>> ruleChains =
                 restClient.getRestTemplate().exchange(
-                        restUrl + "/api/ruleChains?limit=999&textSearch=Performance Test Rule Chain",
+                        restUrl + "/api/ruleChains?limit=999&textSearch=TB Status Check Rule Chain",
                         HttpMethod.GET,
                         null,
-                        new ParameterizedTypeReference<TextPageData<RuleChain>>() {});
+                        new ParameterizedTypeReference<TextPageData<RuleChain>>() {
+                        });
 
         List<RuleChainId> ruleChainIds = ruleChains.getBody().getData()
                 .stream().map(IdBased::getId).collect(Collectors.toList());
@@ -121,7 +122,8 @@ public class RuleChainManager {
                         restUrl + "/api/ruleChains?limit=999&textSearch=Root Rule Chain",
                         HttpMethod.GET,
                         null,
-                        new ParameterizedTypeReference<TextPageData<RuleChain>>() {});
+                        new ParameterizedTypeReference<TextPageData<RuleChain>>() {
+                        });
 
         Optional<RuleChain> defaultRuleChain = ruleChains.getBody().getData()
                 .stream()

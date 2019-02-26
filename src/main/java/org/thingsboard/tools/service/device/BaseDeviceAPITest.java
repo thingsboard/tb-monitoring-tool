@@ -15,17 +15,28 @@
  */
 package org.thingsboard.tools.service.device;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.thingsboard.client.tools.RestClient;
 import org.thingsboard.server.common.data.Device;
 import org.thingsboard.server.common.data.id.DeviceId;
+import org.thingsboard.tools.service.email.EmailService;
+import org.thingsboard.tools.service.websocket.WebSocketClientEndpoint;
 
+import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -37,13 +48,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Slf4j
 public abstract class BaseDeviceAPITest implements DeviceAPITest {
 
-    static String dataAsStr = "{\"longKey\":73}";
+    private static String dataAsStr = "{\"temperature\":30}";
     static byte[] data = dataAsStr.getBytes(StandardCharsets.UTF_8);
 
     static ObjectMapper mapper = new ObjectMapper();
 
     static final int LOG_PAUSE = 1;
     static final int PUBLISHED_MESSAGES_LOG_PAUSE = 5;
+
+    private static final int MIN_NUMB = 0;
+    private static final int MAX_NUMB = 50;
 
     @Value("${device.startIdx}")
     int deviceStartIdx;
@@ -54,26 +68,72 @@ public abstract class BaseDeviceAPITest implements DeviceAPITest {
     @Value("${rest.url}")
     String restUrl;
 
+    @Value("${rest.webSocketUrl}")
+    String webSocketUrl;
+
     @Value("${rest.username}")
     String username;
 
     @Value("${rest.password}")
     String password;
 
+    @Value("${performance.duration}")
+    int duration;
+
+    @Autowired
+    private EmailService emailService;
+
     RestClient restClient;
 
     int deviceCount;
 
     final ExecutorService httpExecutor = Executors.newFixedThreadPool(100);
-    final ScheduledExecutorService schedulerExecutor = Executors.newScheduledThreadPool(10);
-    final ScheduledExecutorService schedulerLogExecutor = Executors.newScheduledThreadPool(10);
+    final ScheduledExecutorService scheduledApiExecutor = Executors.newScheduledThreadPool(10);
+    final ScheduledExecutorService scheduledExecutor = Executors.newScheduledThreadPool(10);
+
+    final Map<Integer, Long> subscriptionsMap = new ConcurrentHashMap<>();
+    final Map<String, Integer> deviceSubIdsMap = new ConcurrentHashMap<>();
 
     private final List<DeviceId> deviceIds = Collections.synchronizedList(new ArrayList<>());
+
+    private WebSocketClientEndpoint clientEndPoint;
+    private boolean sendEmail;
 
     void init() {
         deviceCount = deviceEndIdx - deviceStartIdx;
         restClient = new RestClient(restUrl);
         restClient.login(username, password);
+        try {
+            clientEndPoint = new WebSocketClientEndpoint(new URI(webSocketUrl + restClient.getToken()));
+            handleWebSocketMsg();
+            scheduledExecutor.scheduleAtFixedRate(() -> {
+                if (sendEmail) {
+                    log.info("Sending an email in case of some troubles with the TB!");
+//                    emailService.sendAlertEmail();
+                    sendEmail = false;
+                }
+            }, 0, 15, TimeUnit.SECONDS);
+        } catch (URISyntaxException e) {
+            log.error("Bad URI provided...", e);
+        }
+        scheduledExecutor.scheduleAtFixedRate(() -> emailService.sendStatusEmail(), 1, 12, TimeUnit.HOURS);
+    }
+
+    private void handleWebSocketMsg() {
+        clientEndPoint.addMessageHandler(message -> {
+            log.info("Arrived message via WebSocket: {}", message);
+            try {
+                long currTs = System.currentTimeMillis();
+
+                int subscriptionId = mapper.readTree(message).get("subscriptionId").asInt();
+                if (subscriptionsMap.containsKey(subscriptionId)) {
+                    long taskStartTs = subscriptionsMap.get(subscriptionId);
+                    sendEmail = currTs - taskStartTs > duration;
+                }
+            } catch (IOException e) {
+                log.warn("Failed to read message to json {}", message);
+            }
+        });
     }
 
     void destroy() {
@@ -113,7 +173,7 @@ public abstract class BaseDeviceAPITest implements DeviceAPITest {
             });
         }
 
-        ScheduledFuture<?> logScheduleFuture = schedulerLogExecutor.scheduleAtFixedRate(() -> {
+        ScheduledFuture<?> logScheduleFuture = scheduledExecutor.scheduleAtFixedRate(() -> {
             try {
                 log.info("{} devices have been created so far...", count.get());
             } catch (Exception ignored) {
@@ -144,16 +204,64 @@ public abstract class BaseDeviceAPITest implements DeviceAPITest {
             });
         }
 
-        ScheduledFuture<?> logScheduleFuture = schedulerLogExecutor.scheduleAtFixedRate(() -> {
+        ScheduledFuture<?> logScheduleFuture = scheduledExecutor.scheduleAtFixedRate(() -> {
             try {
                 log.info("{} devices have been removed so far...", count.get());
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
         }, 0, LOG_PAUSE, TimeUnit.SECONDS);
 
         latch.await();
         logScheduleFuture.cancel(true);
         Thread.sleep(1000);
         log.info("{} devices have been removed successfully! {} were failed for removal!", count.get(), deviceIds.size() - count.get());
+    }
+
+    @Override
+    public void subscribeWebSockets() {
+        int cmdId = 1;
+        for (DeviceId deviceId : deviceIds) {
+            subscribeToWebSocket(deviceId, cmdId);
+            deviceSubIdsMap.putIfAbsent(restClient.getCredentials(deviceId).getCredentialsId(), cmdId);
+            cmdId++;
+        }
+    }
+
+    private void subscribeToWebSocket(DeviceId deviceId, int cmdId) {
+        ObjectNode objectNode = mapper.createObjectNode();
+        objectNode.put("entityType", "DEVICE");
+        objectNode.put("entityId", deviceId.toString());
+        objectNode.put("scope", "LATEST_TELEMETRY");
+        objectNode.put("cmdId", Integer.toString(cmdId));
+
+        ArrayNode arrayNode = mapper.createArrayNode();
+        arrayNode.add(objectNode);
+
+        ObjectNode resultNode = mapper.createObjectNode();
+        resultNode.set("tsSubCmds", arrayNode);
+        try {
+            clientEndPoint.sendMessage(mapper.writeValueAsString(resultNode));
+        } catch (Exception e) {
+            log.error("Failed to send the message using WebSocket", e);
+        }
+    }
+
+    byte[] generateByteData() {
+        return generateStrData().getBytes(StandardCharsets.UTF_8);
+    }
+
+    String generateStrData() {
+        ObjectNode node = mapper.createObjectNode().put("temperature", getRandomValue(MIN_NUMB, MAX_NUMB));
+        try {
+            return mapper.writeValueAsString(node);
+        } catch (JsonProcessingException e) {
+            log.warn("Failed to write JSON as String [{}]", node);
+        }
+        return dataAsStr;
+    }
+
+    private int getRandomValue(int min, int max) {
+        return (int) (Math.random() * ((max - min) + 1)) + min;
     }
 
 }

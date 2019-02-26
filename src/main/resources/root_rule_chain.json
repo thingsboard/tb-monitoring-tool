@@ -1,43 +1,19 @@
 {
   "ruleChain": {
     "additionalInfo": null,
-    "name": "Performance Test Rule Chain",
+    "name": "TB Status Check Rule Chain",
     "firstRuleNodeId": null,
     "root": false,
     "debugMode": false,
     "configuration": null
   },
   "metadata": {
-    "firstNodeIndex": 2,
+    "firstNodeIndex": 1,
     "nodes": [
       {
         "additionalInfo": {
-          "layoutX": 824,
-          "layoutY": 156
-        },
-        "type": "org.thingsboard.rule.engine.telemetry.TbMsgTimeseriesNode",
-        "name": "Save Timeseries",
-        "debugMode": false,
-        "configuration": {
-          "defaultTTL": 0
-        }
-      },
-      {
-        "additionalInfo": {
-          "layoutX": 825,
-          "layoutY": 52
-        },
-        "type": "org.thingsboard.rule.engine.telemetry.TbMsgAttributesNode",
-        "name": "Save Client Attributes",
-        "debugMode": false,
-        "configuration": {
-          "scope": "CLIENT_SCOPE"
-        }
-      },
-      {
-        "additionalInfo": {
-          "layoutX": 347,
-          "layoutY": 149
+          "layoutX": 508,
+          "layoutY": 267
         },
         "type": "org.thingsboard.rule.engine.filter.TbMsgTypeSwitchNode",
         "name": "Message Type Switch",
@@ -48,63 +24,129 @@
       },
       {
         "additionalInfo": {
-          "layoutX": 825,
-          "layoutY": 266
+          "layoutX": 205,
+          "layoutY": 270
         },
-        "type": "org.thingsboard.rule.engine.action.TbLogNode",
-        "name": "Log RPC from Device",
+        "type": "org.thingsboard.rule.engine.filter.TbOriginatorTypeFilterNode",
+        "name": "Is Entity Group",
         "debugMode": false,
         "configuration": {
-          "jsScript": "return '\\nIncoming message:\\n' + JSON.stringify(msg) + '\\nIncoming metadata:\\n' + JSON.stringify(metadata);"
+          "originatorTypes": [
+            "ENTITY_GROUP"
+          ]
         }
       },
       {
         "additionalInfo": {
-          "layoutX": 825,
-          "layoutY": 379
+          "layoutX": 301,
+          "layoutY": 94
         },
-        "type": "org.thingsboard.rule.engine.action.TbLogNode",
-        "name": "Log Other",
+        "type": "org.thingsboard.rule.engine.filter.TbMsgTypeFilterNode",
+        "name": "Post attributes or RPC request",
         "debugMode": false,
         "configuration": {
-          "jsScript": "return '\\nIncoming message:\\n' + JSON.stringify(msg) + '\\nIncoming metadata:\\n' + JSON.stringify(metadata);"
+          "messageTypes": [
+            "POST_ATTRIBUTES_REQUEST",
+            "RPC_CALL_FROM_SERVER_TO_DEVICE"
+          ]
         }
       },
       {
         "additionalInfo": {
-          "layoutX": 825,
-          "layoutY": 468
+          "layoutX": 597,
+          "layoutY": 98
         },
-        "type": "org.thingsboard.rule.engine.rpc.TbSendRPCRequestNode",
-        "name": "RPC Call Request",
+        "type": "org.thingsboard.rule.engine.transform.TbDuplicateMsgToGroupNode",
+        "name": "Duplicate To Group Entities",
         "debugMode": false,
         "configuration": {
-          "timeoutInSeconds": 60
+          "entityGroupId": null,
+          "entityGroupIsMessageOriginator": true
         }
       },
       {
         "additionalInfo": {
-          "layoutX": 1100,
-          "layoutY": 158
-        },
-        "type": "org.thingsboard.rule.engine.action.TbMsgCountNode",
-        "name": "Perf tests msg count node",
-        "debugMode": false,
-        "configuration": {
-          "telemetryPrefix": "perf_tests",
-          "interval": 1
-        }
-      },
-      {
-        "additionalInfo": {
-          "layoutX": 1110,
-          "layoutY": 308
+          "layoutX": 1103,
+          "layoutY": 433
         },
         "type": "org.thingsboard.rule.engine.telemetry.TbMsgTimeseriesNode",
-        "name": "Save perf tests statistics",
+        "name": "Save timeseries",
         "debugMode": false,
         "configuration": {
           "defaultTTL": 0
+        }
+      },
+      {
+        "additionalInfo": {
+          "layoutX": 921,
+          "layoutY": 303
+        },
+        "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode",
+        "name": "Script",
+        "debugMode": false,
+        "configuration": {
+          "jsScript": "var i = 0;\nwhile (true) {\n    i++;\n    if (i === 10000) {\n        break;\n    }\n}\n\nreturn {\n    msg: {\n        value: new Date().getTime()\n    },\n    metadata: metadata,\n    msgType: msgType\n};"
+        }
+      },
+      {
+        "additionalInfo": {
+          "layoutX": 788,
+          "layoutY": 155
+        },
+        "type": "org.thingsboard.rule.engine.filter.TbJsFilterNode",
+        "name": "Script",
+        "debugMode": false,
+        "configuration": {
+          "jsScript": "return msg.temperature > 30;"
+        }
+      },
+      {
+        "additionalInfo": {
+          "layoutX": 1045,
+          "layoutY": 198
+        },
+        "type": "org.thingsboard.rule.engine.action.TbClearAlarmNode",
+        "name": "Clear Alarm",
+        "debugMode": false,
+        "configuration": {
+          "alarmType": "General Alarm",
+          "alarmDetailsBuildJs": "var details = {};\nif (metadata.prevAlarmDetails) {\n    details = JSON.parse(metadata.prevAlarmDetails);\n}\nreturn details;"
+        }
+      },
+      {
+        "additionalInfo": {
+          "layoutX": 1042,
+          "layoutY": 64
+        },
+        "type": "org.thingsboard.rule.engine.action.TbCreateAlarmNode",
+        "name": "Create Alarm",
+        "debugMode": false,
+        "configuration": {
+          "alarmType": "General Alarm",
+          "alarmDetailsBuildJs": "var details = {};\nif (metadata.prevAlarmDetails) {\n    details = JSON.parse(metadata.prevAlarmDetails);\n}\ndetails.latest = msg.temperature;\nreturn details;",
+          "severity": "CRITICAL",
+          "propagate": false,
+          "useMessageAlarmData": false
+        }
+      },
+      {
+        "additionalInfo": {
+          "layoutX": 681,
+          "layoutY": 394
+        },
+        "type": "org.thingsboard.rule.engine.filter.TbCheckMessageNode",
+        "name": "Test",
+        "debugMode": false,
+        "configuration": {
+          "messageNames": [
+            "temperature"
+          ],
+          "metadataNames": [
+            "deviceType",
+            "deviceName",
+            "ts"
+          ],
+          "checkAllKeys": true
         }
       }
     ],
@@ -112,37 +154,57 @@
       {
         "fromIndex": 0,
         "toIndex": 6,
-        "type": "Success"
+        "type": "Post telemetry"
       },
       {
-        "fromIndex": 2,
-        "toIndex": 4,
-        "type": "Other"
+        "fromIndex": 0,
+        "toIndex": 9,
+        "type": "Post telemetry"
       },
       {
-        "fromIndex": 2,
-        "toIndex": 1,
-        "type": "Post attributes"
+        "fromIndex": 1,
+        "toIndex": 0,
+        "type": "False"
+      },
+      {
+        "fromIndex": 1,
+        "toIndex": 2,
+        "type": "True"
       },
       {
         "fromIndex": 2,
         "toIndex": 0,
-        "type": "Post telemetry"
+        "type": "False"
       },
       {
         "fromIndex": 2,
         "toIndex": 3,
-        "type": "RPC Request from Device"
+        "type": "True"
       },
       {
-        "fromIndex": 2,
-        "toIndex": 5,
-        "type": "RPC Request to Device"
+        "fromIndex": 3,
+        "toIndex": 0,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 5,
+        "toIndex": 4,
+        "type": "Success"
       },
       {
         "fromIndex": 6,
         "toIndex": 7,
-        "type": "Success"
+        "type": "False"
+      },
+      {
+        "fromIndex": 6,
+        "toIndex": 8,
+        "type": "True"
+      },
+      {
+        "fromIndex": 9,
+        "toIndex": 5,
+        "type": "True"
       }
     ],
     "ruleChainConnections": null
