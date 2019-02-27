@@ -1,12 +1,12 @@
 /**
  * Copyright © 2016-2018 The Thingsboard Authors
- *
+ * <p>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
+ * http://www.apache.org/licenses/LICENSE-2.0
+ * <p>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -29,9 +29,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.concurrent.ListenableFuture;
 import org.springframework.util.concurrent.ListenableFutureCallback;
 import org.springframework.web.client.AsyncRestTemplate;
+import org.thingsboard.server.common.data.id.DeviceId;
 
 import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -62,11 +64,9 @@ public class DeviceHttpAPITest extends BaseDeviceAPITest {
     }
 
     @Override
-    public void runApiTests(int publishTelemetryCount, final int publishTelemetryPause) throws InterruptedException {
+    public void runApiTests(final int publishTelemetryPause) throws InterruptedException {
         restClient.login(username, password);
-        log.info("Starting performance test for {} devices...", deviceCount);
-        long maxDelay = publishTelemetryPause * publishTelemetryCount;
-        final int totalMessagesToPublish = deviceCount * publishTelemetryCount;
+        log.info("Starting TB status check test for {} devices...", deviceCount);
         AtomicInteger totalPublishedCount = new AtomicInteger();
         AtomicInteger successPublishedCount = new AtomicInteger();
         AtomicInteger failedPublishedCount = new AtomicInteger();
@@ -74,60 +74,47 @@ public class DeviceHttpAPITest extends BaseDeviceAPITest {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
 
-        int idx = 0;
-        for (int i = deviceStartIdx; i < deviceEndIdx; i++) {
-            final int tokenNumber = i;
-            final int delayPause = (int) ((double) publishTelemetryPause / deviceCount * idx);
-            idx++;
-            scheduledApiExecutor.scheduleAtFixedRate(() -> {
-                try {
-                    String token = getToken(tokenNumber);
-                    String url = restUrl + "/api/v1/" + token + "/telemetry";
-                    HttpEntity<String> entity = new HttpEntity<>(generateStrData(), headers);
-
-                    int subscriptionId = deviceSubIdsMap.get(token);
-                    if (subscriptionsMap.containsKey(subscriptionId)) {
-                        TbCheckTask task = subscriptionsMap.get(subscriptionId);
-                        if (task.isDone()) {
-                            publishMessage(totalPublishedCount, successPublishedCount, failedPublishedCount, tokenNumber,
-                                    url, entity, subscriptionId);
-                        }
-                    } else {
-                        publishMessage(totalPublishedCount, successPublishedCount, failedPublishedCount, tokenNumber,
-                                url, entity, subscriptionId);
-                    }
-                } catch (Exception e) {
-                    log.error("Error while publishing telemetry, token: {}", tokenNumber, e);
-                }
-            }, delayPause, publishTelemetryPause, TimeUnit.MILLISECONDS);
-        }
-
-        ScheduledFuture<?> scheduledLogFuture = scheduledExecutor.scheduleAtFixedRate(() -> {
+        scheduledExecutor.scheduleAtFixedRate(() -> {
             try {
-                log.info("[{}] messages have been published successfully. [{}] failed. [{}] total.",
-                        successPublishedCount.get(), failedPublishedCount.get(), totalMessagesToPublish);
+                log.info("[{}] messages have been published successfully. [{}] failed.",
+                        successPublishedCount.get(), failedPublishedCount.get());
             } catch (Exception ignored) {
             }
         }, 0, PUBLISHED_MESSAGES_LOG_PAUSE, TimeUnit.SECONDS);
+//        int idx = 0;
+        while (true) {
+            for (Map.Entry<String, SubscriptionData> entry : deviceMap.entrySet()) {
+                String token = entry.getKey();
+                SubscriptionData subscriptionData = entry.getValue();
+//                final int delayPause = (int) ((double) publishTelemetryPause / deviceCount * idx);
+//                idx++;
+//                scheduledApiExecutor.scheduleAtFixedRate(() -> {
+//                    try {
+                String url = restUrl + "/api/v1/" + token + "/telemetry";
+                HttpEntity<String> entity = new HttpEntity<>(generateStrData(), headers);
 
-        ScheduledFuture<?> tokenRefreshScheduleFuture = scheduledExecutor.scheduleAtFixedRate(() -> {
-            try {
-                restClient.login(username, password);
-            } catch (Exception ignored) {
+                int subscriptionId = subscriptionData.getSubscriptionId();
+                if (subscriptionsMap.containsKey(subscriptionId)) {
+                    TbCheckTask task = subscriptionsMap.get(subscriptionId);
+                    if (task.isDone()) {
+                        publishMessage(totalPublishedCount, successPublishedCount, failedPublishedCount, token,
+                                url, entity, subscriptionId);
+                    }
+                } else {
+                    publishMessage(totalPublishedCount, successPublishedCount, failedPublishedCount, token,
+                            url, entity, subscriptionId);
+                }
+//                    } catch (Exception e) {
+//                        log.error("Error while publishing telemetry, token: {}", token, e);
+//                    }
+//                }, delayPause, publishTelemetryPause, TimeUnit.MILLISECONDS);
             }
-        }, 10, 10, TimeUnit.MINUTES);
-
-        Thread.sleep(maxDelay);
-        scheduledLogFuture.cancel(true);
-        tokenRefreshScheduleFuture.cancel(true);
-        scheduledApiExecutor.shutdownNow();
-
-        log.info("Performance test was completed for {} devices!", deviceCount);
-        log.info("{} messages were published successfully, {} failed!", successPublishedCount.get(), failedPublishedCount.get());
+            Thread.sleep(publishTelemetryPause);
+        }
     }
 
     private void publishMessage(AtomicInteger totalPublishedCount, AtomicInteger successPublishedCount, AtomicInteger failedPublishedCount,
-                                int tokenNumber, String url, HttpEntity<String> entity, int subscriptionId) {
+                                String token, String url, HttpEntity<String> entity, int subscriptionId) {
         subscriptionsMap.put(subscriptionId, new TbCheckTask(getCurrentTs(), false));
 
         ListenableFuture<ResponseEntity<Void>> future = httpClient.exchange(url, HttpMethod.POST, entity, Void.class);
@@ -135,7 +122,7 @@ public class DeviceHttpAPITest extends BaseDeviceAPITest {
             @Override
             public void onFailure(Throwable throwable) {
                 failedPublishedCount.getAndIncrement();
-                log.error("Error while publishing telemetry, token: {}", tokenNumber, throwable);
+                log.error("Error while publishing telemetry, token: {}", token, throwable);
                 totalPublishedCount.getAndIncrement();
             }
 
@@ -145,7 +132,7 @@ public class DeviceHttpAPITest extends BaseDeviceAPITest {
                     successPublishedCount.getAndIncrement();
                 } else {
                     failedPublishedCount.getAndIncrement();
-                    log.error("Error while publishing telemetry, token: {}, status code: {}", tokenNumber, responseEntity.getStatusCode().getReasonPhrase());
+                    log.error("Error while publishing telemetry, token: {}, status code: {}", token, responseEntity.getStatusCode().getReasonPhrase());
                 }
                 totalPublishedCount.getAndIncrement();
             }
@@ -158,18 +145,17 @@ public class DeviceHttpAPITest extends BaseDeviceAPITest {
         log.info("Warming up {} devices...", deviceCount);
         CountDownLatch connectLatch = new CountDownLatch(deviceCount);
         AtomicInteger totalWarmedUpCount = new AtomicInteger();
-        for (int i = deviceStartIdx; i < deviceEndIdx; i++) {
-            final int tokenNumber = i;
+        for (Map.Entry<String, SubscriptionData> entry : deviceMap.entrySet()) {
+            String token = entry.getKey();
             httpExecutor.submit(() -> {
                 try {
-                    String token = getToken(tokenNumber);
                     restClient.getRestTemplate()
                             .postForEntity(restUrl + "/api/v1/{token}/telemetry",
                                     mapper.readTree(generateStrData()),
                                     ResponseEntity.class,
                                     token);
                 } catch (Exception e) {
-                    log.error("Error while warming up device, token: {}", tokenNumber, e);
+                    log.error("Error while warming up device, token: {}", token, e);
                 } finally {
                     connectLatch.countDown();
                     totalWarmedUpCount.getAndIncrement();

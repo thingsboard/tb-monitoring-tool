@@ -31,16 +31,12 @@ mqtt:
 device:
   # Device API to use - MQTT or HTTP
   api: "${DEVICE_API:HTTP}"
-  startIdx: "${DEVICE_START_IDX:0}"
-  endIdx: "${DEVICE_END_IDX:1}"
-  createOnStart: "${DEVICE_CREATE_ON_START:true}"
-  deleteOnComplete: "${DEVICE_DELETE_ON_COMPLETE:true}"
+  count: "${DEVICE_COUNT:3}"
 publish:
-  count: "${PUBLISH_COUNT:10}"
-  pause: "${PUBLISH_PAUSE:20000}" # in milliseconds
+  pause: "${PUBLISH_PAUSE:5000}" # in milliseconds
 performance:
   duration: "${PERFORMANCE_DURATION:3000}" # in milliseconds
 email:
-  alertEmails: "${EMAIL_TO_EMAILS:dshvaika@thingsboard.io,dlandiak@thingsboard.io}" # Comma separated list of emails to send an alert
+  alertEmails: "${EMAIL_TO_EMAILS:dshvaika@thingsboard.io,dlandiak@thingsboard.io}" # Comma separated list of emails to check the TB status
   statusEmail: "${EMAIL_STATUS_EMAIL:dlandiak@thingsboard.io}" # Email to check the script status
 

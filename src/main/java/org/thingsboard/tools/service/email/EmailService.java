@@ -15,6 +15,7 @@
  */
 package org.thingsboard.tools.service.email;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -30,6 +31,7 @@ import javax.mail.internet.MimeMessage;
 import java.util.Properties;
 
 @Service
+@Slf4j
 public class EmailService {
 
     private final static String USER_NAME = "dlandiak2110@gmail.com";
@@ -62,6 +64,7 @@ public class EmailService {
         try {
             Transport.send(createMessage(alertEmails, "TB Status", "TB is currently down or in bad conditions!"));
         } catch (MessagingException e) {
+            log.warn("Failed to send the mail about TB conditions!");
             throw new RuntimeException(e);
         }
     }
@@ -70,6 +73,7 @@ public class EmailService {
         try {
             Transport.send(createMessage(statusEmail, "TB Script Status", "Script is working well!"));
         } catch (MessagingException e) {
+            log.warn("Failed to send the mail about script status!");
             throw new RuntimeException(e);
         }
     }

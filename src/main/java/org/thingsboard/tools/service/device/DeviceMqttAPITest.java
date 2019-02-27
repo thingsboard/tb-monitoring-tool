@@ -27,6 +27,7 @@ import org.springframework.stereotype.Service;
 import org.thingsboard.mqtt.MqttClient;
 import org.thingsboard.mqtt.MqttClientConfig;
 import org.thingsboard.mqtt.MqttConnectResult;
+import org.thingsboard.server.common.data.id.DeviceId;
 
 import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
@@ -58,8 +59,7 @@ public class DeviceMqttAPITest extends BaseDeviceAPITest {
 
     private final ScheduledExecutorService warmUpExecutor = Executors.newScheduledThreadPool(10);
 
-    private final List<MqttClient> mqttClients = Collections.synchronizedList(new ArrayList<>());
-    private final Map<MqttClient, String> mqttClientsMap = new ConcurrentHashMap<>();
+    private final Map<MqttClient, Integer> mqttClientsMap = new ConcurrentHashMap<>();
 
     private EventLoopGroup EVENT_LOOP_GROUP;
 
@@ -72,7 +72,7 @@ public class DeviceMqttAPITest extends BaseDeviceAPITest {
     @PreDestroy
     void destroy() {
         super.destroy();
-        for (MqttClient mqttClient : mqttClients) {
+        for (MqttClient mqttClient : mqttClientsMap.keySet()) {
             mqttClient.disconnect();
         }
         if (!this.warmUpExecutor.isShutdown()) {
@@ -106,24 +106,30 @@ public class DeviceMqttAPITest extends BaseDeviceAPITest {
     }
 
     @Override
-    public void runApiTests(int publishTelemetryCount, final int publishTelemetryPause) throws InterruptedException {
-        if (mqttClients.size() == 0) {
+    public void runApiTests(final int publishTelemetryPause) throws InterruptedException {
+        if (mqttClientsMap.size() == 0) {
             log.info("Test stopped. No devices available!");
             return;
         }
-        log.info("Starting performance test for {} devices...", mqttClients.size());
-        long maxDelay = publishTelemetryPause * publishTelemetryCount;
-        final int totalMessagesToPublish = mqttClients.size() * publishTelemetryCount;
+        log.info("Starting TB status check test for {} devices...", mqttClientsMap.size());
         AtomicInteger totalPublishedCount = new AtomicInteger();
         AtomicInteger successPublishedCount = new AtomicInteger();
         AtomicInteger failedPublishedCount = new AtomicInteger();
+
+        scheduledExecutor.scheduleAtFixedRate(() -> {
+            try {
+                log.info("[{}] messages have been published successfully. [{}] failed.",
+                        successPublishedCount.get(), failedPublishedCount.get());
+            } catch (Exception ignored) {
+            }
+        }, 0, PUBLISHED_MESSAGES_LOG_PAUSE, TimeUnit.SECONDS);
+
         int i = 0;
-        for (MqttClient mqttClient : mqttClients) {
-            final int delayPause = (int) ((double) publishTelemetryPause / mqttClients.size() * i);
+        for (MqttClient mqttClient : mqttClientsMap.keySet()) {
+            final int delayPause = (int) ((double) publishTelemetryPause / mqttClientsMap.size() * i);
             i++;
             scheduledApiExecutor.scheduleAtFixedRate(() -> {
-                String token = mqttClientsMap.get(mqttClient);
-                int subscriptionId = deviceSubIdsMap.get(token);
+                int subscriptionId = mqttClientsMap.get(mqttClient);
                 if (subscriptionsMap.containsKey(subscriptionId)) {
                     TbCheckTask task = subscriptionsMap.get(subscriptionId);
                     if (task.isDone()) {
@@ -136,21 +142,6 @@ public class DeviceMqttAPITest extends BaseDeviceAPITest {
                 }
             }, delayPause, publishTelemetryPause, TimeUnit.MILLISECONDS);
         }
-
-        ScheduledFuture<?> scheduledLogFuture = scheduledExecutor.scheduleAtFixedRate(() -> {
-            try {
-                log.info("[{}] messages have been published successfully. [{}] failed. [{}] total.",
-                        successPublishedCount.get(), failedPublishedCount.get(), totalMessagesToPublish);
-            } catch (Exception ignored) {
-            }
-        }, 0, PUBLISHED_MESSAGES_LOG_PAUSE, TimeUnit.SECONDS);
-
-        Thread.sleep(maxDelay);
-        scheduledLogFuture.cancel(true);
-        scheduledApiExecutor.shutdownNow();
-
-        log.info("Performance test was completed for {} devices!", mqttClients.size());
-        log.info("{} messages were published successfully, {} failed!", successPublishedCount.get(), failedPublishedCount.get());
     }
 
     private void publishMessage(AtomicInteger totalPublishedCount, AtomicInteger successPublishedCount, AtomicInteger failedPublishedCount,
@@ -181,16 +172,14 @@ public class DeviceMqttAPITest extends BaseDeviceAPITest {
         AtomicInteger totalConnectedCount = new AtomicInteger();
         CountDownLatch connectLatch = new CountDownLatch(deviceCount);
         int idx = 0;
-        for (int i = deviceStartIdx; i < deviceEndIdx; i++) {
-            final int tokenNumber = i;
+        for (Map.Entry<String, SubscriptionData> entry : deviceMap.entrySet()) {
+            String token = entry.getKey();
             final int delayPause = (int) ((double) publishTelemetryPause / deviceCount * idx);
             idx++;
             warmUpExecutor.schedule(() -> {
                 try {
-                    String token = getToken(tokenNumber);
                     MqttClient client = initClient(token);
-                    mqttClientsMap.putIfAbsent(client, token);
-                    mqttClients.add(client);
+                    mqttClientsMap.putIfAbsent(client, entry.getValue().getSubscriptionId());
                 } catch (Exception e) {
                     log.error("Error while connect device", e);
                 } finally {
@@ -209,15 +198,15 @@ public class DeviceMqttAPITest extends BaseDeviceAPITest {
         connectLatch.await();
         scheduledLogFuture.cancel(true);
 
-        log.info("{} devices have been connected successfully!", mqttClients.size());
-        log.info("Warming up {} devices...", mqttClients.size());
+        log.info("{} devices have been connected successfully!", mqttClientsMap.size());
+        log.info("Warming up {} devices...", mqttClientsMap.size());
 
         AtomicInteger totalWarmedUpCount = new AtomicInteger();
-        CountDownLatch warmUpLatch = new CountDownLatch(mqttClients.size());
+        CountDownLatch warmUpLatch = new CountDownLatch(mqttClientsMap.size());
 
         idx = 0;
-        for (MqttClient mqttClient : mqttClients) {
-            final int delayPause = (int) ((double) publishTelemetryPause / mqttClients.size() * idx);
+        for (MqttClient mqttClient : mqttClientsMap.keySet()) {
+            final int delayPause = (int) ((double) publishTelemetryPause / mqttClientsMap.size() * idx);
             idx++;
             warmUpExecutor.schedule(() -> {
                 mqttClient.publish("v1/devices/me/telemetry", Unpooled.wrappedBuffer(generateByteData()), MqttQoS.AT_LEAST_ONCE)
@@ -244,6 +233,6 @@ public class DeviceMqttAPITest extends BaseDeviceAPITest {
         warmUpLatch.await();
         scheduledLogFuture.cancel(true);
 
-        log.info("{} devices have been warmed up successfully!", mqttClients.size());
+        log.info("{} devices have been warmed up successfully!", mqttClientsMap.size());
     }
 }

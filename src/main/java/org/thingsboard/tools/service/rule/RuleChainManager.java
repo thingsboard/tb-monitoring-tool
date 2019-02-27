@@ -48,8 +48,6 @@ public class RuleChainManager {
     private String password;
 
     private RestClient restClient;
-    private RuleChainId defaultRootRuleChainId;
-    private RuleChainId updatedRuleChainId;
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -57,14 +55,14 @@ public class RuleChainManager {
         restClient = new RestClient(restUrl);
         restClient.login(username, password);
 
-        defaultRootRuleChainId = getDefaultRuleChainId();
+        setDefaultRuleChainAsRoot();
 
         deleteAllPreviousTbStatusCheckRuleChains();
 
         try {
             JsonNode updatedRootRuleChainConfig = objectMapper.readTree(this.getClass().getClassLoader().getResourceAsStream("root_rule_chain.json"));
             RuleChain ruleChain = objectMapper.treeToValue(updatedRootRuleChainConfig.get("ruleChain"), RuleChain.class);
-            updatedRuleChainId = saveUpdatedRootRuleChain(ruleChain);
+            RuleChainId updatedRuleChainId = saveUpdatedRootRuleChain(ruleChain);
             setRootRuleChain(updatedRuleChainId);
 
             RuleChainMetaData ruleChainMetaData = objectMapper.treeToValue(updatedRootRuleChainConfig.get("metadata"), RuleChainMetaData.class);
@@ -74,12 +72,6 @@ public class RuleChainManager {
         } catch (Exception e) {
             log.error("Exception during creation of root rule chain", e);
         }
-    }
-
-    public void revertRootRuleChainAndCleanUp() {
-        restClient.login(username, password);
-        setRootRuleChain(defaultRootRuleChainId);
-        restClient.getRestTemplate().delete(restUrl + "/api/ruleChain/" + updatedRuleChainId.getId());
     }
 
     private void setRootRuleChain(RuleChainId rootRuleChain) {
@@ -116,7 +108,7 @@ public class RuleChainManager {
         ruleChainIds.forEach(ruleChainId -> restClient.getRestTemplate().delete(restUrl + "/api/ruleChain/" + ruleChainId.getId()));
     }
 
-    private RuleChainId getDefaultRuleChainId() {
+    private void setDefaultRuleChainAsRoot() {
         ResponseEntity<TextPageData<RuleChain>> ruleChains =
                 restClient.getRestTemplate().exchange(
                         restUrl + "/api/ruleChains?limit=999&textSearch=Root Rule Chain",
@@ -134,6 +126,5 @@ public class RuleChainManager {
         }
 
         setRootRuleChain(defaultRuleChain.get().getId());
-        return defaultRuleChain.get().getId();
     }
 }

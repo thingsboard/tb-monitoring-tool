@@ -1,12 +1,12 @@
 /**
  * Copyright © 2016-2018 The Thingsboard Authors
- *
+ * <p>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
+ * http://www.apache.org/licenses/LICENSE-2.0
+ * <p>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -20,6 +20,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.RandomStringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.thingsboard.client.tools.RestClient;
@@ -34,6 +35,7 @@ import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -48,9 +50,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Slf4j
 public abstract class BaseDeviceAPITest implements DeviceAPITest {
 
-    private static String dataAsStr = "{\"temperature\":30}";
-    static byte[] data = dataAsStr.getBytes(StandardCharsets.UTF_8);
-
     static ObjectMapper mapper = new ObjectMapper();
 
     static final int LOG_PAUSE = 1;
@@ -59,11 +58,8 @@ public abstract class BaseDeviceAPITest implements DeviceAPITest {
     private static final int MIN_NUMB = 0;
     private static final int MAX_NUMB = 50;
 
-    @Value("${device.startIdx}")
-    int deviceStartIdx;
-
-    @Value("${device.endIdx}")
-    int deviceEndIdx;
+    @Value("${device.count}")
+    int deviceCount;
 
     @Value("${rest.url}")
     String restUrl;
@@ -85,38 +81,41 @@ public abstract class BaseDeviceAPITest implements DeviceAPITest {
 
     RestClient restClient;
 
-    int deviceCount;
-
     final ExecutorService httpExecutor = Executors.newFixedThreadPool(100);
     final ScheduledExecutorService scheduledApiExecutor = Executors.newScheduledThreadPool(10);
     final ScheduledExecutorService scheduledExecutor = Executors.newScheduledThreadPool(10);
 
     final Map<Integer, TbCheckTask> subscriptionsMap = new ConcurrentHashMap<>();
-    final Map<String, Integer> deviceSubIdsMap = new ConcurrentHashMap<>();
-
-    private final List<DeviceId> deviceIds = Collections.synchronizedList(new ArrayList<>());
+    final Map<String, SubscriptionData> deviceMap = new ConcurrentHashMap<>();
 
     private WebSocketClientEndpoint clientEndPoint;
     private boolean sendEmail;
 
     void init() {
-        deviceCount = deviceEndIdx - deviceStartIdx;
         restClient = new RestClient(restUrl);
         restClient.login(username, password);
         try {
             clientEndPoint = new WebSocketClientEndpoint(new URI(webSocketUrl + restClient.getToken()));
             handleWebSocketMsg();
             scheduledExecutor.scheduleAtFixedRate(() -> {
-                if (sendEmail) {
-                    log.info("Sending an email in case of some troubles with the TB!");
-                    emailService.sendAlertEmail();
-                    sendEmail = false;
+                try {
+                    if (sendEmail) {
+                        log.info("Sending an email in case of any troubles with the TB!");
+                        //emailService.sendAlertEmail();
+                        sendEmail = false;
+                    }
+                } catch (Exception ignored) {
                 }
-            }, 0, 30, TimeUnit.MINUTES);
+            }, 0, 30, TimeUnit.SECONDS);
         } catch (URISyntaxException e) {
             log.error("Bad URI provided...", e);
         }
-        scheduledExecutor.scheduleAtFixedRate(() -> emailService.sendStatusEmail(), 1, 12, TimeUnit.HOURS);
+        scheduledExecutor.scheduleAtFixedRate(() -> {
+            try {
+                emailService.sendStatusEmail();
+            } catch (Exception ignored) {
+            }
+        }, 1, 12, TimeUnit.HOURS);
 
         scheduledExecutor.scheduleAtFixedRate(() -> {
             for (Map.Entry<Integer, TbCheckTask> entry : subscriptionsMap.entrySet()) {
@@ -154,25 +153,20 @@ public abstract class BaseDeviceAPITest implements DeviceAPITest {
         }
     }
 
-    String getToken(int token) {
-        return String.format("%20d", token).replace(" ", "0");
-    }
-
     @Override
     public void createDevices() throws Exception {
         restClient.login(username, password);
         log.info("Creating {} devices...", deviceCount);
         CountDownLatch latch = new CountDownLatch(deviceCount);
         AtomicInteger count = new AtomicInteger();
-        for (int i = deviceStartIdx; i < deviceEndIdx; i++) {
-            final int tokenNumber = i;
+        for (int i = 0; i < deviceCount; i++) {
             httpExecutor.submit(() -> {
                 Device device = null;
                 try {
-                    String token = getToken(tokenNumber);
-                    device = restClient.createDevice("Device " + token, "default");
-                    restClient.updateDeviceCredentials(device.getId(), token);
-                    deviceIds.add(device.getId());
+                    device = restClient.createDevice("Device_" + RandomStringUtils.randomNumeric(5), "default");
+                    SubscriptionData data = new SubscriptionData();
+                    data.setDeviceId(device.getId());
+                    deviceMap.putIfAbsent(restClient.getCredentials(device.getId()).getCredentialsId(), data);
                     count.getAndIncrement();
                 } catch (Exception e) {
                     log.error("Error while creating device", e);
@@ -202,55 +196,16 @@ public abstract class BaseDeviceAPITest implements DeviceAPITest {
         latch.await();
         tokenRefreshScheduleFuture.cancel(true);
         logScheduleFuture.cancel(true);
-        log.info("{} devices have been created successfully!", deviceIds.size());
-    }
-
-    @Override
-    public void removeDevices() throws Exception {
-        restClient.login(username, password);
-        log.info("Removing {} devices...", deviceIds.size());
-        CountDownLatch latch = new CountDownLatch(deviceIds.size());
-        AtomicInteger count = new AtomicInteger();
-        for (DeviceId deviceId : deviceIds) {
-            httpExecutor.submit(() -> {
-                try {
-                    restClient.getRestTemplate().delete(restUrl + "/api/device/" + deviceId.getId());
-                    count.getAndIncrement();
-                } catch (Exception e) {
-                    log.error("Error while deleting device", e);
-                } finally {
-                    latch.countDown();
-                }
-            });
-        }
-
-        ScheduledFuture<?> logScheduleFuture = scheduledExecutor.scheduleAtFixedRate(() -> {
-            try {
-                log.info("{} devices have been removed so far...", count.get());
-            } catch (Exception ignored) {
-            }
-        }, 0, LOG_PAUSE, TimeUnit.SECONDS);
-
-        ScheduledFuture<?> tokenRefreshScheduleFuture = scheduledExecutor.scheduleAtFixedRate(() -> {
-            try {
-                restClient.login(username, password);
-            } catch (Exception ignored) {
-            }
-        }, 10, 10, TimeUnit.MINUTES);
-
-        latch.await();
-        logScheduleFuture.cancel(true);
-        tokenRefreshScheduleFuture.cancel(true);
-        Thread.sleep(1000);
-        log.info("{} devices have been removed successfully! {} were failed for removal!", count.get(), deviceIds.size() - count.get());
+        log.info("{} devices have been created successfully!", deviceMap.size());
     }
 
     @Override
     public void subscribeWebSockets() {
         int cmdId = 1;
-        for (DeviceId deviceId : deviceIds) {
-            subscribeToWebSocket(deviceId, cmdId);
-            deviceSubIdsMap.putIfAbsent(restClient.getCredentials(deviceId).getCredentialsId(), cmdId);
+        for (Map.Entry<String, SubscriptionData> entry : deviceMap.entrySet()) {
+            SubscriptionData data = entry.getValue();
+            data.setSubscriptionId(cmdId);
+            subscribeToWebSocket(data.getDeviceId(), cmdId);
             cmdId++;
         }
     }
@@ -285,7 +240,7 @@ public abstract class BaseDeviceAPITest implements DeviceAPITest {
         } catch (JsonProcessingException e) {
             log.warn("Failed to write JSON as String [{}]", node);
         }
-        return dataAsStr;
+        return "{\"temperature\":30}";
     }
 
     private int getRandomValue(int min, int max) {
