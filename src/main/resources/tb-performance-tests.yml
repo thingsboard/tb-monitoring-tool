@@ -30,13 +30,15 @@ mqtt:
   port: "${MQTT_PORT:1883}"
 device:
   # Device API to use - MQTT or HTTP
-  api: "${DEVICE_API:HTTP}"
+  api: "${DEVICE_API:MQTT}"
   count: "${DEVICE_COUNT:3}"
 publish:
   pause: "${PUBLISH_PAUSE:5000}" # in milliseconds
 performance:
   duration: "${PERFORMANCE_DURATION:3000}" # in milliseconds
 email:
-  alertEmails: "${EMAIL_TO_EMAILS:dshvaika@thingsboard.io,dlandiak@thingsboard.io}" # Comma separated list of emails to check the TB status
+  alertEmails: "${EMAIL_ALERT_EMAILS:dshvaika@thingsboard.io,dlandiak@thingsboard.io}" # Comma separated list of emails to check the TB status
+  alertEmailsPeriod: "${EMAIL_ALERT_PERIOD:1}" # in hours
   statusEmail: "${EMAIL_STATUS_EMAIL:dlandiak@thingsboard.io}" # Email to check the script status
+  statusEmailPeriod: "${EMAIL_STATUS_PERIOD:6}" # in hours
 

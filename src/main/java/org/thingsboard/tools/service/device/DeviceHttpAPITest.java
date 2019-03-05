@@ -1,12 +1,12 @@
 /**
  * Copyright © 2016-2018 The Thingsboard Authors
- * <p>
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * <p>
- * http://www.apache.org/licenses/LICENSE-2.0
- * <p>
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -29,7 +29,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.concurrent.ListenableFuture;
 import org.springframework.util.concurrent.ListenableFutureCallback;
 import org.springframework.web.client.AsyncRestTemplate;
-import org.thingsboard.server.common.data.id.DeviceId;
 
 import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
@@ -81,19 +80,13 @@ public class DeviceHttpAPITest extends BaseDeviceAPITest {
             } catch (Exception ignored) {
             }
         }, 0, PUBLISHED_MESSAGES_LOG_PAUSE, TimeUnit.SECONDS);
-//        int idx = 0;
         while (true) {
             for (Map.Entry<String, SubscriptionData> entry : deviceMap.entrySet()) {
                 String token = entry.getKey();
-                SubscriptionData subscriptionData = entry.getValue();
-//                final int delayPause = (int) ((double) publishTelemetryPause / deviceCount * idx);
-//                idx++;
-//                scheduledApiExecutor.scheduleAtFixedRate(() -> {
-//                    try {
                 String url = restUrl + "/api/v1/" + token + "/telemetry";
                 HttpEntity<String> entity = new HttpEntity<>(generateStrData(), headers);
 
-                int subscriptionId = subscriptionData.getSubscriptionId();
+                int subscriptionId = entry.getValue().getSubscriptionId();
                 if (subscriptionsMap.containsKey(subscriptionId)) {
                     TbCheckTask task = subscriptionsMap.get(subscriptionId);
                     if (task.isDone()) {
@@ -104,12 +97,11 @@ public class DeviceHttpAPITest extends BaseDeviceAPITest {
                     publishMessage(totalPublishedCount, successPublishedCount, failedPublishedCount, token,
                             url, entity, subscriptionId);
                 }
-//                    } catch (Exception e) {
-//                        log.error("Error while publishing telemetry, token: {}", token, e);
-//                    }
-//                }, delayPause, publishTelemetryPause, TimeUnit.MILLISECONDS);
             }
-            Thread.sleep(publishTelemetryPause);
+            try {
+                Thread.sleep(publishTelemetryPause);
+            } catch (Exception ignored) {
+            }
         }
     }
 

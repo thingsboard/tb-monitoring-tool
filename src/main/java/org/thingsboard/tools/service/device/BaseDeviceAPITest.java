@@ -1,12 +1,12 @@
 /**
  * Copyright © 2016-2018 The Thingsboard Authors
- * <p>
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * <p>
- * http://www.apache.org/licenses/LICENSE-2.0
- * <p>
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -33,10 +33,6 @@ import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -54,7 +50,7 @@ public abstract class BaseDeviceAPITest implements DeviceAPITest {
 
     static final int LOG_PAUSE = 1;
     static final int PUBLISHED_MESSAGES_LOG_PAUSE = 5;
-
+    private static final int TASKS_CHECK_PAUSE = 60;
     private static final int MIN_NUMB = 0;
     private static final int MAX_NUMB = 50;
 
@@ -76,13 +72,18 @@ public abstract class BaseDeviceAPITest implements DeviceAPITest {
     @Value("${performance.duration}")
     int duration;
 
+    @Value("${email.alertEmailsPeriod}")
+    private int alertEmailsPeriod;
+
+    @Value("${email.statusEmailPeriod}")
+    private int statusEmailPeriod;
+
     @Autowired
     private EmailService emailService;
 
     RestClient restClient;
 
     final ExecutorService httpExecutor = Executors.newFixedThreadPool(100);
-    final ScheduledExecutorService scheduledApiExecutor = Executors.newScheduledThreadPool(10);
     final ScheduledExecutorService scheduledExecutor = Executors.newScheduledThreadPool(10);
 
     final Map<Integer, TbCheckTask> subscriptionsMap = new ConcurrentHashMap<>();
@@ -97,51 +98,12 @@ public abstract class BaseDeviceAPITest implements DeviceAPITest {
         try {
             clientEndPoint = new WebSocketClientEndpoint(new URI(webSocketUrl + restClient.getToken()));
             handleWebSocketMsg();
-            scheduledExecutor.scheduleAtFixedRate(() -> {
-                try {
-                    if (sendEmail) {
-                        log.info("Sending an email in case of any troubles with the TB!");
-                        //emailService.sendAlertEmail();
-                        sendEmail = false;
-                    }
-                } catch (Exception ignored) {
-                }
-            }, 0, 30, TimeUnit.SECONDS);
         } catch (URISyntaxException e) {
             log.error("Bad URI provided...", e);
         }
-        scheduledExecutor.scheduleAtFixedRate(() -> {
-            try {
-                emailService.sendStatusEmail();
-            } catch (Exception ignored) {
-            }
-        }, 1, 12, TimeUnit.HOURS);
-
-        scheduledExecutor.scheduleAtFixedRate(() -> {
-            for (Map.Entry<Integer, TbCheckTask> entry : subscriptionsMap.entrySet()) {
-                TbCheckTask task = entry.getValue();
-                if (!task.isDone() && getCurrentTs() - task.getStartTs() > duration) {
-                    task.setDone(true);
-                    sendEmail = true;
-                }
-            }
-        }, 0, 15, TimeUnit.SECONDS);
-    }
-
-    private void handleWebSocketMsg() {
-        clientEndPoint.addMessageHandler(message -> {
-            log.info("Arrived message via WebSocket: {}", message);
-            try {
-                int subscriptionId = mapper.readTree(message).get("subscriptionId").asInt();
-                if (subscriptionsMap.containsKey(subscriptionId)) {
-                    TbCheckTask task = subscriptionsMap.get(subscriptionId);
-                    task.setDone(true);
-                    sendEmail = getCurrentTs() - task.getStartTs() > duration;
-                }
-            } catch (IOException e) {
-                log.warn("Failed to read message to json {}", message);
-            }
-        });
+        scheduleAlertEmailSending();
+        scheduleScriptStatusEmailSending();
+        scheduleTasksCheck();
     }
 
     void destroy() {
@@ -249,6 +211,56 @@ public abstract class BaseDeviceAPITest implements DeviceAPITest {
 
     long getCurrentTs() {
         return System.currentTimeMillis();
+    }
+
+    private void handleWebSocketMsg() {
+        clientEndPoint.addMessageHandler(message -> {
+            log.info("Arrived message via WebSocket: {}", message);
+            try {
+                int subscriptionId = mapper.readTree(message).get("subscriptionId").asInt();
+                if (subscriptionsMap.containsKey(subscriptionId)) {
+                    TbCheckTask task = subscriptionsMap.get(subscriptionId);
+                    task.setDone(true);
+                    sendEmail = getCurrentTs() - task.getStartTs() > duration;
+                }
+            } catch (IOException e) {
+                log.warn("Failed to read message to json {}", message);
+            }
+        });
+    }
+
+    private void scheduleAlertEmailSending() {
+        scheduledExecutor.scheduleAtFixedRate(() -> {
+            try {
+                if (sendEmail) {
+                    log.info("Sending an email in case of any troubles with the TB!");
+                    emailService.sendAlertEmail();
+                    sendEmail = false;
+                }
+            } catch (Exception ignored) {
+            }
+        }, 0, alertEmailsPeriod, TimeUnit.HOURS);
+    }
+
+    private void scheduleScriptStatusEmailSending() {
+        scheduledExecutor.scheduleAtFixedRate(() -> {
+            try {
+                emailService.sendStatusEmail();
+            } catch (Exception ignored) {
+            }
+        }, 1, statusEmailPeriod, TimeUnit.HOURS);
+    }
+
+    private void scheduleTasksCheck() {
+        scheduledExecutor.scheduleAtFixedRate(() -> {
+            for (Map.Entry<Integer, TbCheckTask> entry : subscriptionsMap.entrySet()) {
+                TbCheckTask task = entry.getValue();
+                if (!task.isDone() && getCurrentTs() - task.getStartTs() > duration) {
+                    task.setDone(true);
+                    sendEmail = true;
+                }
+            }
+        }, 0, TASKS_CHECK_PAUSE, TimeUnit.SECONDS);
     }
 
 }

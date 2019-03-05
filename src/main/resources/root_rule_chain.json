@@ -8,12 +8,12 @@
     "configuration": null
   },
   "metadata": {
-    "firstNodeIndex": 1,
+    "firstNodeIndex": 0,
     "nodes": [
       {
         "additionalInfo": {
-          "layoutX": 508,
-          "layoutY": 267
+          "layoutX": 240,
+          "layoutY": 239
         },
         "type": "org.thingsboard.rule.engine.filter.TbMsgTypeSwitchNode",
         "name": "Message Type Switch",
@@ -24,50 +24,8 @@
       },
       {
         "additionalInfo": {
-          "layoutX": 205,
-          "layoutY": 270
-        },
-        "type": "org.thingsboard.rule.engine.filter.TbOriginatorTypeFilterNode",
-        "name": "Is Entity Group",
-        "debugMode": false,
-        "configuration": {
-          "originatorTypes": [
-            "ENTITY_GROUP"
-          ]
-        }
-      },
-      {
-        "additionalInfo": {
-          "layoutX": 301,
-          "layoutY": 94
-        },
-        "type": "org.thingsboard.rule.engine.filter.TbMsgTypeFilterNode",
-        "name": "Post attributes or RPC request",
-        "debugMode": false,
-        "configuration": {
-          "messageTypes": [
-            "POST_ATTRIBUTES_REQUEST",
-            "RPC_CALL_FROM_SERVER_TO_DEVICE"
-          ]
-        }
-      },
-      {
-        "additionalInfo": {
-          "layoutX": 597,
-          "layoutY": 98
-        },
-        "type": "org.thingsboard.rule.engine.transform.TbDuplicateMsgToGroupNode",
-        "name": "Duplicate To Group Entities",
-        "debugMode": false,
-        "configuration": {
-          "entityGroupId": null,
-          "entityGroupIsMessageOriginator": true
-        }
-      },
-      {
-        "additionalInfo": {
-          "layoutX": 1103,
-          "layoutY": 433
+          "layoutX": 1024,
+          "layoutY": 375
         },
         "type": "org.thingsboard.rule.engine.telemetry.TbMsgTimeseriesNode",
         "name": "Save timeseries",
@@ -78,8 +36,8 @@
       },
       {
         "additionalInfo": {
-          "layoutX": 921,
-          "layoutY": 303
+          "layoutX": 756,
+          "layoutY": 295
         },
         "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode",
         "name": "Script",
@@ -90,8 +48,8 @@
       },
       {
         "additionalInfo": {
-          "layoutX": 788,
-          "layoutY": 155
+          "layoutX": 499,
+          "layoutY": 137
         },
         "type": "org.thingsboard.rule.engine.filter.TbJsFilterNode",
         "name": "Script",
@@ -102,8 +60,8 @@
       },
       {
         "additionalInfo": {
-          "layoutX": 1045,
-          "layoutY": 198
+          "layoutX": 774,
+          "layoutY": 176
         },
         "type": "org.thingsboard.rule.engine.action.TbClearAlarmNode",
         "name": "Clear Alarm",
@@ -115,8 +73,8 @@
       },
       {
         "additionalInfo": {
-          "layoutX": 1042,
-          "layoutY": 64
+          "layoutX": 774,
+          "layoutY": 50
         },
         "type": "org.thingsboard.rule.engine.action.TbCreateAlarmNode",
         "name": "Create Alarm",
@@ -131,8 +89,8 @@
       },
       {
         "additionalInfo": {
-          "layoutX": 681,
-          "layoutY": 394
+          "layoutX": 487,
+          "layoutY": 355
         },
         "type": "org.thingsboard.rule.engine.filter.TbCheckMessageNode",
         "name": "Test",
@@ -153,57 +111,32 @@
     "connections": [
       {
         "fromIndex": 0,
-        "toIndex": 6,
+        "toIndex": 3,
         "type": "Post telemetry"
       },
       {
         "fromIndex": 0,
-        "toIndex": 9,
+        "toIndex": 6,
         "type": "Post telemetry"
       },
       {
-        "fromIndex": 1,
-        "toIndex": 0,
-        "type": "False"
-      },
-      {
-        "fromIndex": 1,
-        "toIndex": 2,
-        "type": "True"
-      },
-      {
         "fromIndex": 2,
-        "toIndex": 0,
-        "type": "False"
-      },
-      {
-        "fromIndex": 2,
-        "toIndex": 3,
-        "type": "True"
+        "toIndex": 1,
+        "type": "Success"
       },
       {
         "fromIndex": 3,
-        "toIndex": 0,
-        "type": "Success"
-      },
-      {
-        "fromIndex": 5,
         "toIndex": 4,
-        "type": "Success"
-      },
-      {
-        "fromIndex": 6,
-        "toIndex": 7,
         "type": "False"
       },
       {
-        "fromIndex": 6,
-        "toIndex": 8,
+        "fromIndex": 3,
+        "toIndex": 5,
         "type": "True"
       },
       {
-        "fromIndex": 9,
-        "toIndex": 5,
+        "fromIndex": 6,
+        "toIndex": 2,
         "type": "True"
       }
     ],

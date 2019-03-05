@@ -27,13 +27,9 @@ import org.springframework.stereotype.Service;
 import org.thingsboard.mqtt.MqttClient;
 import org.thingsboard.mqtt.MqttClientConfig;
 import org.thingsboard.mqtt.MqttConnectResult;
-import org.thingsboard.server.common.data.id.DeviceId;
 
 import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -124,11 +120,8 @@ public class DeviceMqttAPITest extends BaseDeviceAPITest {
             }
         }, 0, PUBLISHED_MESSAGES_LOG_PAUSE, TimeUnit.SECONDS);
 
-        int i = 0;
-        for (MqttClient mqttClient : mqttClientsMap.keySet()) {
-            final int delayPause = (int) ((double) publishTelemetryPause / mqttClientsMap.size() * i);
-            i++;
-            scheduledApiExecutor.scheduleAtFixedRate(() -> {
+        while (true) {
+            for (MqttClient mqttClient : mqttClientsMap.keySet()) {
                 int subscriptionId = mqttClientsMap.get(mqttClient);
                 if (subscriptionsMap.containsKey(subscriptionId)) {
                     TbCheckTask task = subscriptionsMap.get(subscriptionId);
@@ -140,7 +133,11 @@ public class DeviceMqttAPITest extends BaseDeviceAPITest {
                     publishMessage(totalPublishedCount, successPublishedCount, failedPublishedCount, mqttClient,
                             subscriptionId);
                 }
-            }, delayPause, publishTelemetryPause, TimeUnit.MILLISECONDS);
+            }
+            try {
+                Thread.sleep(publishTelemetryPause);
+            } catch (Exception ignored) {
+            }
         }
     }
 

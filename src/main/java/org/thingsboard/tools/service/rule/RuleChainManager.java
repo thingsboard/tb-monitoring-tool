@@ -51,7 +51,7 @@ public class RuleChainManager {
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
-    public void createRuleChainWithCountNodeAndSetAsRoot() {
+    public void createRuleChainAndSetAsRoot() {
         restClient = new RestClient(restUrl);
         restClient.login(username, password);
 
