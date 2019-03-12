@@ -22,7 +22,7 @@ server:
 
 rest:
   url: "${REST_URL:http://localhost:8080}"
-  webSocketUrl: "${REST_WEB_SOCKET_URL:ws://localhost:8080/api/ws/plugins/telemetry?token=}"
+  webSocketUrl: "${REST_WEB_SOCKET_URL:ws://localhost:8080/api/ws/plugins/telemetry?token}"
   username: "${REST_USERNAME:tenant@thingsboard.org}"
   password: "${REST_PASSWORD:tenant}"
 mqtt:

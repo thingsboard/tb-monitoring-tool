@@ -96,7 +96,7 @@ public abstract class BaseDeviceAPITest implements DeviceAPITest {
         restClient = new RestClient(restUrl);
         restClient.login(username, password);
         try {
-            clientEndPoint = new WebSocketClientEndpoint(new URI(webSocketUrl + restClient.getToken()));
+            clientEndPoint = new WebSocketClientEndpoint(new URI(webSocketUrl + "=" + restClient.getToken()));
             handleWebSocketMsg();
         } catch (URISyntaxException e) {
             log.error("Bad URI provided...", e);
