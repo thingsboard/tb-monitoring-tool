@@ -1,7 +1,7 @@
 # env-status-test
 Thingsboard environment status test
 
-The project that is able to check the status of the Thingsboard environment by sending the messages for a specified number of devices and expect them to be processed within a given period of time.
+The project that is able to check the status of the Thingsboard environment by sending the messages to a specified number of devices and expect them to be processed within a given period of time.
 
 ## Prerequisites
 
@@ -24,7 +24,7 @@ and put next content into the text file (modify it according to your test goals)
 REST_URL=http://IP_ADDRESS_OF_TB_INSTANCE:9090
 # IP_ADDRESS_OF_TB_INSTANCE is your local IP address if you run ThingsBoard on your dev machine in docker
 # Port should be modified as well if needed 
-REST_WEB_SOCKET_URL=ws://IP_ADDRESS_OF_TB_INSTANCE:9090/api/ws/plugins/telemetry?token=
+REST_WEB_SOCKET_URL=ws://IP_ADDRESS_OF_TB_INSTANCE:9090/api/ws/plugins/telemetry?token
 REST_USERNAME=tenant@thingsboard.org
 REST_PASSWORD=tenant
 
