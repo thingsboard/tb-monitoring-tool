@@ -63,7 +63,12 @@ Where:
 - `EMAIL_STATUS_PERIOD`          - Time between sending the script status emails (in minutes)
 
   
-Once params are configured to run test simple type from the folder where configuration file is located:
+Once params are configured to run monitoring tool type from the folder where configuration file is located:
 ```bash
-docker run -it --env-file .env --name tb-monitoring-tool thingsboard/tb-monitoring-tool
+docker run -d --env-file .env --name tb-monitoring-tool thingsboard/tb-monitoring-tool
+```
+
+To see logs of the particular container run command:
+```bash
+docker logs -f tb-monitoring-tool
 ```
