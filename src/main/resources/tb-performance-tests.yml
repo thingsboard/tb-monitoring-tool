@@ -41,4 +41,12 @@ email:
   alertEmailsPeriod: "${EMAIL_ALERT_PERIOD:1}" # in hours
   statusEmail: "${EMAIL_STATUS_EMAIL:dlandiak@thingsboard.io}" # Email to check the script status
   statusEmailPeriod: "${EMAIL_STATUS_PERIOD:6}" # in hours
+  smtp:
+    starttls:
+      enable: "${EMAIL_SMTP_STARTTLS_ENABLE:true}"
+    auth: "${EMAIL_SMTP_AUTH:true}"
+    host: "${EMAIL_SMTP_HOST:smtp.gmail.com}"
+    port: "${EMAIL_SMTP_PORT:587}"
+    username: "${EMAIL_SMTP_USERNAME:smtp_username0@gmail.com}"
+    password: "${EMAIL_SMTP_PASSWORD:smtp_password}"
 

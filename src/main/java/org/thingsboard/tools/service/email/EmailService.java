@@ -34,28 +34,43 @@ import java.util.Properties;
 @Slf4j
 public class EmailService {
 
-    private final static String USER_NAME = "dlandiak2110@gmail.com";
-    private final static String PASSWORD = "qaZ3380570qaZ";
-
     @Value("${email.alertEmails}")
     private String alertEmails;
 
     @Value("${email.statusEmail}")
     private String statusEmail;
 
+    @Value("${email.smtp.starttls.enabled}")
+    private Boolean smtpStartTlsEnabled;
+
+    @Value("${email.smtp.auth}")
+    private Boolean smtpAuth;
+
+    @Value("${email.smtp.host}")
+    private String smtpHost;
+
+    @Value("${email.smtp.port}")
+    private Integer smtpPort;
+
+    @Value("${email.smtp.username}")
+    private String smtpUsername;
+
+    @Value("${email.smtp.password}")
+    private String smtpPassword;
+
     private Session session;
 
     @PostConstruct
     void init() {
         Properties props = new Properties();
-        props.put("mail.smtp.starttls.enable", "true");
-        props.put("mail.smtp.auth", "true");
-        props.put("mail.smtp.host", "smtp.gmail.com");
-        props.put("mail.smtp.port", "587");
+        props.put("mail.smtp.starttls.enable", smtpStartTlsEnabled);
+        props.put("mail.smtp.auth", smtpAuth);
+        props.put("mail.smtp.host", smtpHost);
+        props.put("mail.smtp.port", smtpPort);
 
         session = Session.getInstance(props, new Authenticator() {
             protected PasswordAuthentication getPasswordAuthentication() {
-                return new PasswordAuthentication(USER_NAME, PASSWORD);
+                return new PasswordAuthentication(smtpUsername, smtpPassword);
             }
         });
     }
@@ -80,7 +95,7 @@ public class EmailService {
 
     private Message createMessage(String emailAddresses, String subject, String text) throws MessagingException {
         Message message = new MimeMessage(session);
-        message.setFrom(new InternetAddress(USER_NAME));
+        message.setFrom(new InternetAddress(smtpUsername));
         message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(emailAddresses));
         message.setSubject(subject);
         message.setText(text);
