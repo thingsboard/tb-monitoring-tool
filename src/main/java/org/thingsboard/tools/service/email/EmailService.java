@@ -40,8 +40,8 @@ public class EmailService {
     @Value("${email.statusEmail}")
     private String statusEmail;
 
-    @Value("${email.smtp.starttls.enabled}")
-    private Boolean smtpStartTlsEnabled;
+    @Value("${email.smtp.starttls.enable}")
+    private Boolean smtpStartTlsEnable;
 
     @Value("${email.smtp.auth}")
     private Boolean smtpAuth;
@@ -63,7 +63,7 @@ public class EmailService {
     @PostConstruct
     void init() {
         Properties props = new Properties();
-        props.put("mail.smtp.starttls.enable", smtpStartTlsEnabled);
+        props.put("mail.smtp.starttls.enable", smtpStartTlsEnable);
         props.put("mail.smtp.auth", smtpAuth);
         props.put("mail.smtp.host", smtpHost);
         props.put("mail.smtp.port", smtpPort);
