@@ -38,7 +38,7 @@
         <spring.version>4.3.7.RELEASE</spring.version>
         <netty.version>4.1.32.Final</netty.version>
         <winsw.version>2.0.1</winsw.version>
-        <pkg.name>tb-performance-tests</pkg.name>
+        <pkg.name>tb-monitoring-tool</pkg.name>
         <pkg.user>thingsboard</pkg.user>
         <pkg.unixLogFolder>/var/log/${pkg.name}</pkg.unixLogFolder>
         <pkg.installFolder>/usr/share/${pkg.name}</pkg.installFolder>
@@ -46,7 +46,7 @@
         <thingsboard.version>2.3.1-SNAPSHOT</thingsboard.version>
         <mail.version>1.5.0-b01</mail.version>
         <docker.repo>thingsboard</docker.repo>
-        <tb-performance-test.docker.name>tb-performance-test</tb-performance-test.docker.name>
+        <tb-monitoring-tool.docker.name>tb-monitoring-tool</tb-monitoring-tool.docker.name>
     </properties>
 
     <dependencies>
@@ -312,7 +312,7 @@
                                 <resource>
                                     <directory>src/main/conf</directory>
                                     <excludes>
-                                        <exclude>tb-performance-tests.conf</exclude>
+                                        <exclude>tb-monitoring-tool.conf</exclude>
                                     </excludes>
                                     <filtering>true</filtering>
                                 </resource>
@@ -510,7 +510,7 @@
                             <goal>build</goal>
                         </goals>
                         <configuration>
-                            <repository>${docker.repo}/${tb-performance-test.docker.name}</repository>
+                            <repository>${docker.repo}/${tb-monitoring-tool.docker.name}</repository>
                             <verbose>true</verbose>
                             <googleContainerRegistryEnabled>false</googleContainerRegistryEnabled>
                             <contextDirectory>${project.build.directory}/docker</contextDirectory>
@@ -523,7 +523,7 @@
                             <goal>tag</goal>
                         </goals>
                         <configuration>
-                            <repository>${docker.repo}/${tb-performance-test.docker.name}</repository>
+                            <repository>${docker.repo}/${tb-monitoring-tool.docker.name}</repository>
                             <tag>${project.version}</tag>
                         </configuration>
                     </execution>
@@ -547,25 +547,25 @@
                         <artifactId>dockerfile-maven-plugin</artifactId>
                         <executions>
                             <execution>
-                                <id>push-latest-docker-tb-performance-test-image</id>
+                                <id>push-latest-docker-tb-monitoring-tool-image</id>
                                 <phase>pre-integration-test</phase>
                                 <goals>
                                     <goal>push</goal>
                                 </goals>
                                 <configuration>
                                     <tag>latest</tag>
-                                    <repository>${docker.repo}/${tb-performance-test.docker.name}</repository>
+                                    <repository>${docker.repo}/${tb-monitoring-tool.docker.name}</repository>
                                 </configuration>
                             </execution>
                             <execution>
-                                <id>push-version-docker-tb-performance-test-image</id>
+                                <id>push-version-docker-tb-monitoring-tool-image</id>
                                 <phase>pre-integration-test</phase>
                                 <goals>
                                     <goal>push</goal>
                                 </goals>
                                 <configuration>
                                     <tag>${project.version}</tag>
-                                    <repository>${docker.repo}/${tb-performance-test.docker.name}</repository>
+                                    <repository>${docker.repo}/${tb-monitoring-tool.docker.name}</repository>
                                 </configuration>
                             </execution>
                         </executions>
