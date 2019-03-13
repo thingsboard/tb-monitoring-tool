@@ -24,13 +24,13 @@ import org.springframework.context.ConfigurableApplicationContext;
 import java.util.Arrays;
 
 @SpringBootApplication(exclude = {SecurityAutoConfiguration.class })
-public class PerformanceTestsApplication {
+public class MonitoringApplication {
 
     private static final String SPRING_CONFIG_NAME_KEY = "--spring.config.name";
     private static final String DEFAULT_SPRING_CONFIG_PARAM = SPRING_CONFIG_NAME_KEY + "=" + "tb-monitoring-tool";
 
     public static void main(String[] args) {
-        ConfigurableApplicationContext ctx = SpringApplication.run(PerformanceTestsApplication.class, updateArguments(args));
+        ConfigurableApplicationContext ctx = SpringApplication.run(MonitoringApplication.class, updateArguments(args));
         int exitCode = SpringApplication.exit(ctx, (ExitCodeGenerator) () -> 0);
         System.exit(exitCode);
     }
