@@ -239,7 +239,7 @@ public abstract class BaseDeviceAPITest implements DeviceAPITest {
                 }
             } catch (Exception ignored) {
             }
-        }, 0, alertEmailsPeriod, TimeUnit.HOURS);
+        }, 0, alertEmailsPeriod, TimeUnit.MINUTES);
     }
 
     private void scheduleScriptStatusEmailSending() {
@@ -248,7 +248,7 @@ public abstract class BaseDeviceAPITest implements DeviceAPITest {
                 emailService.sendStatusEmail();
             } catch (Exception ignored) {
             }
-        }, 1, statusEmailPeriod, TimeUnit.HOURS);
+        }, 1, statusEmailPeriod, TimeUnit.MINUTES);
     }
 
     private void scheduleTasksCheck() {

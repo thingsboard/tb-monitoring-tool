@@ -40,9 +40,9 @@ PUBLISH_PAUSE=5000
 PERFORMANCE_DURATION=3000
 
 EMAIL_ALERT_EMAILS=YOUR_EMAIL_ADDRESSES
-EMAIL_ALERT_PERIOD=1
+EMAIL_ALERT_PERIOD=60
 EMAIL_STATUS_EMAIL=YOUR_EMAIL_ADDRESSES
-EMAIL_STATUS_PERIOD=6
+EMAIL_STATUS_PERIOD=360
 ```
 
 Where: 
@@ -58,9 +58,9 @@ Where:
 - `PUBLISH_PAUSE`                - Pause between messages for a single simulated device in milliseconds
 - `PERFORMANCE_DURATION`         - Time for processing of a single message to determine whether the TB instance is working well in milliseconds
 - `EMAIL_ALERT_EMAILS`           - Comma separated list of emails to send an alert in case of TB env troubles
-- `EMAIL_ALERT_PERIOD`           - Time between sending the alert emails
+- `EMAIL_ALERT_PERIOD`           - Time between sending the alert emails (in minutes)
 - `EMAIL_STATUS_EMAIL`           - Comma separated list of emails to send a status of the script
-- `EMAIL_STATUS_PERIOD`          - Time between sending the script status emails
+- `EMAIL_STATUS_PERIOD`          - Time between sending the script status emails (in minutes)
 
   
 Once params are configured to run test simple type from the folder where configuration file is located:
