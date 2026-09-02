@@ -1,5 +1,5 @@
 #
-# Copyright © 2016-2018 The Thingsboard Authors
+# Copyright © 2016-2026 The Thingsboard Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,37 +14,13 @@
 # limitations under the License.
 #
 
-FROM openjdk:8-jdk
+# Build the jar first (from repo root): mvn package -DskipTests
+# Then: docker build -f docker/Dockerfile -t tb-monitoring .
+# Multi-arch (amd64/arm64) - the jar is pure JVM bytecode, only the base image needs both platforms:
+#   docker buildx build --platform linux/amd64,linux/arm64 -f docker/Dockerfile -t <repo>:tag --push .
 
-COPY start-tests.sh ${pkg.name}.conf ${pkg.name}.deb /tmp/
+FROM thingsboard/openjdk25:trixie-slim
 
-RUN chmod a+x /tmp/*.sh \
-    && mv /tmp/start-tests.sh /usr/bin
+COPY target/tb-monitoring-*.jar /app/tb-monitoring.jar
 
-RUN dpkg -i /tmp/${pkg.name}.deb
-
-RUN update-rc.d ${pkg.name} disable
-
-RUN mv /tmp/${pkg.name}.conf ${pkg.installFolder}/conf
-
-ENV REST_URL=localhost:9090
-ENV REST_WEB_SOCKET_URL=ws://localhost:9090/api/ws/plugins/telemetry?token
-ENV REST_USERNAME=tenant@thingsboard.org
-ENV REST_PASSWORD=tenant
-
-ENV MQTT_HOST=localhost
-ENV MQTT_PORT=1883
-
-ENV DEVICE_API=HTTP
-ENV DEVICE_COUNT=3
-
-ENV PUBLISH_PAUSE=5000
-
-ENV PERFORMANCE_DURATION=3000
-
-ENV EMAIL_ALERT_EMAILS=dshvaika@thingsboard.io,dlandiak@thingsboard.io
-ENV EMAIL_ALERT_PERIOD=60
-ENV EMAIL_STATUS_EMAIL=dlandiak@thingsboard.io
-ENV EMAIL_STATUS_PERIOD=360
-
-CMD ["start-tests.sh"]
+ENTRYPOINT ["java", "-jar", "/app/tb-monitoring.jar"]
