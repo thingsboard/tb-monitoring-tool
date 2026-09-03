@@ -158,7 +158,7 @@ public class MonitoringEntityService {
     // Probed once and cached, so a single build monitors both CE and PE targets.
     private Boolean pe;
 
-    private boolean isPe() {
+    public boolean isPe() {
         if (pe == null) {
             pe = tbClient.getSystemVersionInfo()
                     .map(info -> info.path("type").asText(""))

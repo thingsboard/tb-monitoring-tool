@@ -11,9 +11,9 @@ signal so a fallback success can't mask or resolve a real incident.
 
 Also monitors ThingsBoard PE's Integrations Framework (HTTP/CoAP/MQTT) the same way - a test
 payload through the integration's endpoint, then a WS round trip. The same build works against
-either CE or PE - it probes the target server at startup and adjusts accordingly. Integration
-checks are meaningless against a CE target and stay disabled by default - only enable them
-when pointed at a PE server.
+either CE or PE - it probes the target server's edition at startup and adjusts accordingly.
+Integration checks are enabled by default but only meaningful against PE, so they're
+automatically skipped when the target turns out to be CE - nothing to turn off by hand.
 
 Exposes results as Slack notifications, with optional incident grouping/auto-resolution.
 

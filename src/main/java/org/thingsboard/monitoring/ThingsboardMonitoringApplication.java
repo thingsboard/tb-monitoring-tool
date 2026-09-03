@@ -61,6 +61,7 @@ public class ThingsboardMonitoringApplication {
     @EventListener(ApplicationReadyEvent.class)
     public void startMonitoring() {
         entityService.checkEntities();
+        log.info("Starting monitoring for {}", entityService.isPe() ? "PE" : "CE");
         monitoringServices.forEach(BaseMonitoringService::init);
 
         for (int i = 0; i < monitoringServices.size(); i++) {

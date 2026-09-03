@@ -113,12 +113,13 @@ monitoring:
         # To add more targets, use following environment variables:
         # monitoring.transports.lwm2m.targets[1].base_url, monitoring.transports.lwm2m.targets[2].base_url, etc.
 
-  # Integrations Framework is PE-only - these checks are meaningless against a CE target and will
-  # just fail every cycle if enabled there. Leave disabled unless the monitored server is PE.
+  # Integrations Framework is PE-only. Enabled by default regardless - IntegrationsMonitoringService
+  # detects the target's edition at startup and skips these checks entirely against a CE target,
+  # so there's nothing to turn off by hand when pointing this at CE.
   integrations:
     http:
       # Enable HTTP integration checks
-      enabled: '${HTTP_INTEGRATION_MONITORING_ENABLED:false}'
+      enabled: '${HTTP_INTEGRATION_MONITORING_ENABLED:true}'
       # HTTP request timeout in milliseconds
       request_timeout_ms: '${HTTP_INTEGRATION_REQUEST_TIMEOUT_MS:4000}'
       target:
@@ -130,7 +131,7 @@ monitoring:
         name_prefix: '${HTTP_INTEGRATION_TARGET_NAME_PREFIX:}'
     coap:
       # Enable CoAP integration checks
-      enabled: '${COAP_INTEGRATION_MONITORING_ENABLED:false}'
+      enabled: '${COAP_INTEGRATION_MONITORING_ENABLED:true}'
       # CoAP request timeout in milliseconds
       request_timeout_ms: '${COAP_INTEGRATION_REQUEST_TIMEOUT_MS:4000}'
       target:
@@ -142,7 +143,7 @@ monitoring:
         name_prefix: '${COAP_INTEGRATION_TARGET_NAME_PREFIX:}'
     mqtt:
       # Enable MQTT integration checks
-      enabled: '${MQTT_INTEGRATION_MONITORING_ENABLED:false}'
+      enabled: '${MQTT_INTEGRATION_MONITORING_ENABLED:true}'
       # MQTT request timeout in milliseconds
       request_timeout_ms: '${MQTT_INTEGRATION_REQUEST_TIMEOUT_MS:4000}'
       # Username the integration's own outbound connection to the broker authenticates with -
