@@ -31,10 +31,6 @@
         <maven.compiler.release>25</maven.compiler.release>
         <pkg.mainClass>org.thingsboard.monitoring.ThingsboardMonitoringApplication</pkg.mainClass>
 
-        <!-- pinned to the latest release published on repo.thingsboard.io - the monorepo's dev-branch
-             SNAPSHOT of these three modules is never published anywhere public, so this standalone repo
-             tracks the most recent release instead. Bump when a newer release lands, or switch to
-             4.4.0-SNAPSHOT + the libs-snapshot repository once access to it is available. -->
         <tb.version>4.3.1.4</tb.version>
 
         <spring-boot.version>3.5.15</spring-boot.version>
