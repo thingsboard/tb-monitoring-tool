@@ -1,0 +1,11 @@
+{
+  "type": "default",
+  "deviceData": {
+    "configuration": {
+      "type": "DEFAULT"
+    },
+    "transportConfiguration": {
+      "type": "DEFAULT"
+    }
+  }
+}

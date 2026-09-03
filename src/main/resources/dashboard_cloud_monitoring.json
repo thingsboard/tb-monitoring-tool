@@ -205,6 +205,34 @@
                   "funcBody": null,
                   "usePostProcessing": null,
                   "postFuncBody": null
+                },
+                {
+                  "name": "httpIntegrationWsUpdateLatency",
+                  "type": "timeseries",
+                  "label": "HTTP integration - overall",
+                  "color": "#ff9800",
+                  "settings": {},
+                  "_hash": 0.4102013076355556,
+                  "aggregationType": null,
+                  "units": "ms",
+                  "decimals": null,
+                  "funcBody": null,
+                  "usePostProcessing": null,
+                  "postFuncBody": null
+                },
+                {
+                  "name": "mqttIntegrationWsUpdateLatency",
+                  "type": "timeseries",
+                  "label": "MQTT integration - overall",
+                  "color": "#795548",
+                  "settings": {},
+                  "_hash": 0.9144458575707786,
+                  "aggregationType": null,
+                  "units": "ms",
+                  "decimals": null,
+                  "funcBody": null,
+                  "usePostProcessing": null,
+                  "postFuncBody": null
                 }
               ],
               "alarmFilterConfig": {
@@ -400,6 +428,34 @@
                     "thresholds": []
                   },
                   "_hash": 0.85549409179514,
+                  "aggregationType": null,
+                  "units": "ms",
+                  "decimals": null,
+                  "funcBody": null,
+                  "usePostProcessing": null,
+                  "postFuncBody": null
+                },
+                {
+                  "name": "httpIntegrationRequestLatency",
+                  "type": "timeseries",
+                  "label": "HTTP integration request latency",
+                  "color": "#00bcd4",
+                  "settings": {},
+                  "_hash": 0.8820175099905732,
+                  "aggregationType": null,
+                  "units": "ms",
+                  "decimals": null,
+                  "funcBody": null,
+                  "usePostProcessing": null,
+                  "postFuncBody": null
+                },
+                {
+                  "name": "mqttIntegrationRequestLatency",
+                  "type": "timeseries",
+                  "label": "MQTT integration request latency",
+                  "color": "#cddc39",
+                  "settings": {},
+                  "_hash": 0.5813468034944297,
                   "aggregationType": null,
                   "units": "ms",
                   "decimals": null,

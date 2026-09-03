@@ -9,6 +9,12 @@ When login/WS is down, it falls back to a weaker "accepted" check per transport 
 transport itself acknowledge the message?), reported separately from the full end-to-end
 signal so a fallback success can't mask or resolve a real incident.
 
+Also monitors ThingsBoard PE's Integrations Framework (HTTP/CoAP/MQTT) the same way - a test
+payload through the integration's endpoint, then a WS round trip. The same build works against
+either CE or PE - it probes the target server at startup and adjusts accordingly. Integration
+checks are meaningless against a CE target and stay disabled by default - only enable them
+when pointed at a PE server.
+
 Exposes results as Slack notifications, with optional incident grouping/auto-resolution.
 
 See `src/main/resources/tb-monitoring.yml` for the full list of config keys (env var name, default, and what it does — every key is documented there).
@@ -21,10 +27,9 @@ Requires JDK 25.
 mvn package -DskipTests
 ```
 
-`common:data`/`common:util`/`rest-client` are pinned to the latest ThingsBoard release
-published on `repo.thingsboard.io` (not a SNAPSHOT) — this repo builds standalone, no need
-to clone or build the main `thingsboard` monorepo. See `pom.xml` for the pinned version and
-why.
+`common:data`/`common:util`/`rest-client` are pinned to a fixed release published on
+`repo.thingsboard.io` (not a SNAPSHOT) — this repo builds standalone, no need to clone or
+build the main `thingsboard` monorepo.
 
 ## Running
 
