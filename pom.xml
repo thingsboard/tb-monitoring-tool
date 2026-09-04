@@ -45,6 +45,7 @@
         <paho.client.version>1.2.5</paho.client.version>
         <java-websocket.version>1.5.6</java-websocket.version>
         <slack-api.version>1.48.0</slack-api.version>
+        <protobuf.version>4.28.3</protobuf.version>
     </properties>
 
     <dependencyManagement>
@@ -147,6 +148,27 @@
         <dependency>
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-otlp</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protobuf-java</artifactId>
+            <!-- opentelemetry-proto (pulled in transitively by micrometer-registry-otlp) requires this
+                 protobuf-java version at runtime. protobuf-java-util is pinned to the same version right
+                 below so the whole protobuf family stays consistent on this module's classpath. -->
+            <version>${protobuf.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protobuf-java-util</artifactId>
+            <version>${protobuf.version}</version>
         </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>
