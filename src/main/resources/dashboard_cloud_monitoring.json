@@ -103,7 +103,7 @@
                   "postFuncBody": null
                 },
                 {
-                  "name": "coapIntegrationWsUpdateLatency",
+                  "name": "icoapWsUpdateLatency",
                   "type": "timeseries",
                   "label": "CoAP integration - overall",
                   "color": "#e91e63",
@@ -207,7 +207,7 @@
                   "postFuncBody": null
                 },
                 {
-                  "name": "httpIntegrationWsUpdateLatency",
+                  "name": "ihttpWsUpdateLatency",
                   "type": "timeseries",
                   "label": "HTTP integration - overall",
                   "color": "#ff9800",
@@ -221,7 +221,7 @@
                   "postFuncBody": null
                 },
                 {
-                  "name": "mqttIntegrationWsUpdateLatency",
+                  "name": "imqttWsUpdateLatency",
                   "type": "timeseries",
                   "label": "MQTT integration - overall",
                   "color": "#795548",
@@ -384,7 +384,7 @@
                   "postFuncBody": null
                 },
                 {
-                  "name": "coapIntegrationRequestLatency",
+                  "name": "icoapRequestLatency",
                   "type": "timeseries",
                   "label": "CoAP integration request latency",
                   "color": "#9c27b0",
@@ -436,7 +436,7 @@
                   "postFuncBody": null
                 },
                 {
-                  "name": "httpIntegrationRequestLatency",
+                  "name": "ihttpRequestLatency",
                   "type": "timeseries",
                   "label": "HTTP integration request latency",
                   "color": "#00bcd4",
@@ -450,7 +450,7 @@
                   "postFuncBody": null
                 },
                 {
-                  "name": "mqttIntegrationRequestLatency",
+                  "name": "imqttRequestLatency",
                   "type": "timeseries",
                   "label": "MQTT integration request latency",
                   "color": "#cddc39",

@@ -16,6 +16,7 @@
 package org.thingsboard.monitoring.metrics;
 
 import org.junit.jupiter.api.Test;
+import org.thingsboard.monitoring.config.integration.IntegrationType;
 import org.thingsboard.monitoring.config.transport.TransportType;
 
 import java.net.URI;
@@ -142,6 +143,66 @@ public class ProbeLabelResolverTest {
         ProbeLabelResolver.ProbeLabels labels =
                 ProbeLabelResolver.resolveTransportLabels(TransportType.MQTT, "tcp://tb mqtt:1883");
         assertThat(labels).isNull();
+    }
+
+    @Test
+    public void integrationLabels_checkTypeGetsIPrefix_toAvoidCollisionWithSameProtocolTransport() {
+        ProbeLabelResolver.ProbeLabels labels =
+                ProbeLabelResolver.resolveIntegrationLabels(IntegrationType.HTTP, "http://acme.example.com");
+        assertThat(labels.check()).isEqualTo("ihttp");
+        assertThat(labels.endpoint()).isEqualTo("acme.example.com:80");
+    }
+
+    @Test
+    public void integrationLabels_coap_defaultPortWhenMissing() {
+        ProbeLabelResolver.ProbeLabels labels =
+                ProbeLabelResolver.resolveIntegrationLabels(IntegrationType.COAP, "coap://acme.example.com");
+        assertThat(labels.check()).isEqualTo("icoap");
+        assertThat(labels.endpoint()).isEqualTo("acme.example.com:5683");
+    }
+
+    @Test
+    public void integrationLabels_mqtt_explicitPortIsPreserved() {
+        ProbeLabelResolver.ProbeLabels labels =
+                ProbeLabelResolver.resolveIntegrationLabels(IntegrationType.MQTT, "tcp://acme.example.com:1884");
+        assertThat(labels.check()).isEqualTo("imqtt");
+        assertThat(labels.endpoint()).isEqualTo("acme.example.com:1884");
+    }
+
+    @Test
+    public void integrationLabels_https_checkStaysShort_butDefaultPortIsTheSecureOne() {
+        // the "check" label doesn't split into a secure variant (unlike transports) - but the default
+        // port still must, or an https target with no explicit port gets labelled with port 80
+        ProbeLabelResolver.ProbeLabels labels =
+                ProbeLabelResolver.resolveIntegrationLabels(IntegrationType.HTTP, "https://acme.example.com");
+        assertThat(labels.check()).isEqualTo("ihttp");
+        assertThat(labels.endpoint()).isEqualTo("acme.example.com:443");
+    }
+
+    @Test
+    public void integrationLabels_coaps_defaultPortIsTheSecureOne() {
+        ProbeLabelResolver.ProbeLabels labels =
+                ProbeLabelResolver.resolveIntegrationLabels(IntegrationType.COAP, "coaps://acme.example.com");
+        assertThat(labels.check()).isEqualTo("icoap");
+        assertThat(labels.endpoint()).isEqualTo("acme.example.com:5684");
+    }
+
+    @Test
+    public void integrationLabels_mqttSsl_defaultPortIsTheSecureOne() {
+        ProbeLabelResolver.ProbeLabels labels =
+                ProbeLabelResolver.resolveIntegrationLabels(IntegrationType.MQTT, "ssl://acme.example.com");
+        assertThat(labels.check()).isEqualTo("imqtt");
+        assertThat(labels.endpoint()).isEqualTo("acme.example.com:8883");
+    }
+
+    @Test
+    public void resolveIntegrationLabels_nullBaseUrl_returnsNullInsteadOfThrowing() {
+        assertThat(ProbeLabelResolver.resolveIntegrationLabels(IntegrationType.HTTP, null)).isNull();
+    }
+
+    @Test
+    public void resolveIntegrationLabels_schemelessBaseUrl_returnsNull() {
+        assertThat(ProbeLabelResolver.resolveIntegrationLabels(IntegrationType.MQTT, "acme.example.com:1883")).isNull();
     }
 
     @Test

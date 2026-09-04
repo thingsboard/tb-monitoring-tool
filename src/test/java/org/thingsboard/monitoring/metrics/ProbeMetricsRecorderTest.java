@@ -19,6 +19,8 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.thingsboard.monitoring.config.integration.IntegrationInfo;
+import org.thingsboard.monitoring.config.integration.IntegrationType;
 import org.thingsboard.monitoring.config.transport.TransportInfo;
 import org.thingsboard.monitoring.config.transport.TransportMonitoringTarget;
 import org.thingsboard.monitoring.config.transport.TransportType;
@@ -60,6 +62,112 @@ public class ProbeMetricsRecorderTest {
         target.setBaseUrl(baseUrl);
         target.setQueue(queue);
         return new TransportInfo(type, target);
+    }
+
+    private IntegrationInfo integrationInfo(IntegrationType type, String baseUrl) {
+        return new IntegrationInfo(type, baseUrl);
+    }
+
+    @Test
+    public void integrationProbe_checkGetsIPrefix_soItDoesNotCollideWithSameProtocolTransport() {
+        ProbeMetricsRecorder recorder = recorder(true);
+        recorder.recordProbe(transportInfo(TransportType.HTTP, "http://acme.example.com"), true);
+        recorder.recordProbe(integrationInfo(IntegrationType.HTTP, "http://acme.example.com"), false);
+
+        assertThat(registry.get("probe_success")
+                .tags("check", "http", "endpoint", "acme.example.com:80").gauge().value()).isEqualTo(1d);
+        assertThat(registry.get("probe_success")
+                .tags("check", "ihttp", "endpoint", "acme.example.com:80").gauge().value()).isEqualTo(0d);
+        assertThat(registry.getMeters()).hasSize(2); // distinct series, transport probe untouched by the integration one
+    }
+
+    @Test
+    public void integrationProbe_coap_mapsToIcoapCheck() {
+        ProbeMetricsRecorder recorder = recorder(true);
+        recorder.recordProbe(integrationInfo(IntegrationType.COAP, "coap://acme.example.com"), true);
+
+        assertThat(registry.get("probe_success")
+                .tags("check", "icoap", "endpoint", "acme.example.com:5683").gauge().value()).isEqualTo(1d);
+    }
+
+    @Test
+    public void integrationProbe_mqtt_mapsToImqttCheck() {
+        ProbeMetricsRecorder recorder = recorder(true);
+        recorder.recordProbe(integrationInfo(IntegrationType.MQTT, "tcp://acme.example.com:1883"), true);
+
+        assertThat(registry.get("probe_success")
+                .tags("check", "imqtt", "endpoint", "acme.example.com:1883").gauge().value()).isEqualTo(1d);
+    }
+
+    @Test
+    public void integrationActionDuration_recordsSeparateSeriesPerAction() {
+        ProbeMetricsRecorder recorder = recorder(true);
+        IntegrationInfo target = integrationInfo(IntegrationType.HTTP, "http://acme.example.com");
+
+        recorder.recordActionDuration(target, "request", 9);
+        recorder.recordActionDuration(target, "ws_update", 11);
+
+        assertThat(registry.get("probe_duration_ms")
+                .tags("check", "ihttp", "action", "request").gauge().value()).isEqualTo(9d);
+        assertThat(registry.get("probe_duration_ms")
+                .tags("check", "ihttp", "action", "ws_update").gauge().value()).isEqualTo(11d);
+    }
+
+    @Test
+    public void integrationAcceptedProbe_recordsSeparateSeriesFromE2eProbe() {
+        ProbeMetricsRecorder recorder = recorder(true);
+        IntegrationInfo target = integrationInfo(IntegrationType.MQTT, "tcp://acme.example.com:1883");
+
+        recorder.recordProbe(target, true);
+        recorder.recordAcceptedProbe(target, false);
+
+        assertThat(registry.get("probe_success")
+                .tags("check", "imqtt", "kind", "probe").gauge().value()).isEqualTo(1d);
+        assertThat(registry.get("probe_success")
+                .tags("check", "imqtt", "kind", "accepted").gauge().value()).isEqualTo(0d);
+    }
+
+    @Test
+    public void removeProbe_permanent_forIntegration_removesGauge() {
+        ProbeMetricsRecorder recorder = recorder(true);
+        IntegrationInfo target = integrationInfo(IntegrationType.HTTP, "http://acme.example.com");
+        recorder.recordProbe(target, true);
+
+        recorder.removeProbe(target, ProbeMetricsRecorder.Removal.PERMANENT);
+
+        assertThat(registry.getMeters()).isEmpty();
+    }
+
+    @Test
+    public void schemelessIntegrationBaseUrl_staleRemoval_doesNotEvictWarnedUnresolvable() {
+        // mirrors schemelessTransportBaseUrl_staleRemoval_doesNotEvictWarnedUnresolvable, for the
+        // integration-side warnedUnresolvableIntegration/integrationTagsCache added by this change
+        ProbeMetricsRecorder recorder = recorder(true);
+        IntegrationInfo target = integrationInfo(IntegrationType.HTTP, "acme.example.com");
+        Set<?> warnedUnresolvableIntegration = (Set<?>) ReflectionTestUtils.getField(recorder, "warnedUnresolvableIntegration");
+
+        recorder.recordProbe(target, true);
+        assertThat(warnedUnresolvableIntegration).hasSize(1);
+
+        recorder.startCycle();
+        recorder.removeProbe(target, ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE);
+        assertThat(warnedUnresolvableIntegration).hasSize(1); // stale removal must leave the dedup entry alone
+
+        recorder.removeProbe(target, ProbeMetricsRecorder.Removal.PERMANENT);
+        assertThat(warnedUnresolvableIntegration).isEmpty(); // permanent removal does evict it
+    }
+
+    @Test
+    public void removeAcceptedProbe_permanent_forIntegration_removesAcceptedGaugeOnly() {
+        ProbeMetricsRecorder recorder = recorder(true);
+        IntegrationInfo target = integrationInfo(IntegrationType.HTTP, "http://acme.example.com");
+        recorder.recordProbe(target, true);
+        recorder.recordAcceptedProbe(target, true);
+
+        recorder.removeAcceptedProbe(target, ProbeMetricsRecorder.Removal.PERMANENT);
+
+        assertThat(registry.get("probe_success").tags("kind", "probe").gauge().value()).isEqualTo(1d);
+        assertThat(registry.find("probe_success").tags("kind", "accepted").gauge()).isNull();
     }
 
     @Test

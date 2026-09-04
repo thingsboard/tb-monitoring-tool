@@ -16,6 +16,7 @@
 package org.thingsboard.monitoring.metrics;
 
 import lombok.extern.slf4j.Slf4j;
+import org.thingsboard.monitoring.config.integration.IntegrationType;
 import org.thingsboard.monitoring.config.transport.TransportType;
 
 import java.net.URI;
@@ -53,6 +54,29 @@ public final class ProbeLabelResolver {
         }
         String checkType = resolveCheckType(type, uri);
         String endpoint = resolveEndpoint(uri, checkType);
+        if (endpoint == null) {
+            return null;
+        }
+        return new ProbeLabels(checkType, endpoint);
+    }
+
+    // "check" is IntegrationType.getCheckKey() (ihttp, icoap, imqtt) - matches
+    // IntegrationHealthChecker.getKey(), keeping it short while still avoiding a collision with the
+    // transport of the same protocol against the same domain (same endpoint label otherwise). Unlike
+    // the transport "check" label, this doesn't split into a secure variant (ihttps etc) - but the
+    // default *port* still has to account for the scheme, or a secure integration target with no
+    // explicit port gets labelled with a plaintext port it never contacted.
+    public static ProbeLabels resolveIntegrationLabels(IntegrationType type, String baseUrl) {
+        URI uri;
+        try {
+            uri = URI.create(baseUrl);
+        } catch (IllegalArgumentException | NullPointerException e) {
+            return null;
+        }
+        String checkType = type.getCheckKey();
+        String protocol = resolveSecureAwareProtocol(type.name().toLowerCase(), uri);
+        int defaultPort = DEFAULT_PORTS.getOrDefault(protocol, 0);
+        String endpoint = resolveHostPort(uri, defaultPort);
         if (endpoint == null) {
             return null;
         }
@@ -97,12 +121,21 @@ public final class ProbeLabelResolver {
     }
 
     private static String resolveCheckType(TransportType type, URI uri) {
+        if (type == TransportType.LWM2M) {
+            return "lwm2m";
+        }
+        return resolveSecureAwareProtocol(type.name().toLowerCase(), uri);
+    }
+
+    // shared by resolveCheckType (transport) and resolveIntegrationLabels (integration default port) -
+    // kept as one switch so a future scheme alias can't drift between the two callers
+    private static String resolveSecureAwareProtocol(String baseProtocol, URI uri) {
         String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase();
-        return switch (type) {
-            case MQTT -> "ssl".equals(scheme) ? "mqtts" : "mqtt";
-            case COAP -> "coaps".equals(scheme) ? "coaps" : "coap";
-            case HTTP -> "https".equals(scheme) ? "https" : "http";
-            case LWM2M -> "lwm2m";
+        return switch (baseProtocol) {
+            case "mqtt" -> "ssl".equals(scheme) ? "mqtts" : "mqtt";
+            case "coap" -> "coaps".equals(scheme) ? "coaps" : "coap";
+            case "http" -> "https".equals(scheme) ? "https" : "http";
+            default -> baseProtocol;
         };
     }
 

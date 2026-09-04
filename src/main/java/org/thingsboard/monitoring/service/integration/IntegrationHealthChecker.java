@@ -38,10 +38,10 @@ public abstract class IntegrationHealthChecker<C extends IntegrationMonitoringCo
     }
 
     @Override
-    protected final String createTestPayload(String testValue) {
+    protected final String createTestPayload(String testValue, String telemetryKey) {
         ObjectNode payload = JacksonUtil.newObjectNode();
         payload.set("device", new TextNode(target.getDevice().getName()));
-        payload.set("telemetry", JacksonUtil.newObjectNode().set(TEST_TELEMETRY_KEY, new TextNode(testValue)));
+        payload.set("telemetry", JacksonUtil.newObjectNode().set(telemetryKey, new TextNode(testValue)));
         return payload.toString();
     }
 
@@ -52,7 +52,7 @@ public abstract class IntegrationHealthChecker<C extends IntegrationMonitoringCo
 
     @Override
     protected final String getKey() {
-        return getIntegrationType().name().toLowerCase() + "Integration";
+        return getIntegrationType().getCheckKey();
     }
 
     protected abstract IntegrationType getIntegrationType();
