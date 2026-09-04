@@ -20,6 +20,7 @@ import lombok.SneakyThrows;
 import org.thingsboard.common.util.JacksonUtil;
 
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 
 public class ResourceUtils {
 
@@ -33,6 +34,13 @@ public class ResourceUtils {
     public static JsonNode getResource(String path) {
         InputStream resource = getResourceStream(path);
         return JacksonUtil.OBJECT_MAPPER.readTree(resource);
+    }
+
+    // For templates with placeholders that must be substituted before the text is valid JSON
+    // (e.g. a numeric field), so parsing has to happen after String.format, not before.
+    @SneakyThrows
+    public static String getResourceAsString(String path) {
+        return new String(getResourceStream(path).readAllBytes(), StandardCharsets.UTF_8);
     }
 
     public static InputStream getResourceAsStream(String path) {

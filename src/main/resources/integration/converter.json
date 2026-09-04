@@ -1,0 +1,16 @@
+{
+  "type": "UPLINK",
+  "debugFailures": true,
+  "debugAll": false,
+  "configuration": {
+    "scriptLang": "TBEL",
+    "tbelDecoder": "var data = decodeToJson(payload);\n\nreturn {\n   deviceName: data.device,\n   telemetry: data.telemetry\n};",
+    "decoder": null,
+    "encoder": null,
+    "tbelEncoder": null
+  },
+  "additionalInfo": {
+    "description": "Forwards the monitoring test payload {device, telemetry} straight through, unchanged."
+  },
+  "edgeTemplate": false
+}
