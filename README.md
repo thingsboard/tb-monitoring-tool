@@ -1,74 +1,68 @@
-# env-status-test
-Thingsboard environment status test
+# tb-monitoring
 
-The project that is able to check the status of the Thingsboard environment by sending the messages to a specified number of devices and expect them to be processed within a given period of time.
+Blackbox (synthetic) monitoring tool for a ThingsBoard deployment. It acts as an ordinary
+client: logs in, opens a WebSocket subscription, and sends test telemetry through each
+configured transport (MQTT, CoAP, HTTP, LwM2M), then waits for that telemetry to arrive back
+over WebSocket — an end-to-end round trip, not an internal health check.
 
-## Prerequisites
+When login/WS is down, it falls back to a weaker "accepted" check per transport (does the
+transport itself acknowledge the message?), reported separately from the full end-to-end
+signal so a fallback success can't mask or resolve a real incident.
 
-- [Install Docker CE](https://docs.docker.com/engine/installation/)
+Exposes results as Slack notifications, with optional incident grouping/auto-resolution.
+
+See `src/main/resources/tb-monitoring.yml` for the full list of config keys (env var name, default, and what it does — every key is documented there).
+
+## Building
+
+Requires JDK 25.
+
+```bash
+mvn package -DskipTests
+```
+
+`common:data`/`common:util`/`rest-client` are pinned to the latest ThingsBoard release
+published on `repo.thingsboard.io` (not a SNAPSHOT) — this repo builds standalone, no need
+to clone or build the main `thingsboard` monorepo. See `pom.xml` for the pinned version and
+why.
 
 ## Running
 
-To run test against ThingsBoard first create plain text file to set up test configuration (in our example configuration file name is *.env*):
+Minimum required config (everything else has a sane default — see the yml):
+
 ```bash
-touch .env
+export REST_BASE_URL=http://your-tb-instance:8080
+export WS_BASE_URL=ws://your-tb-instance:8080
+export REST_AUTH_USERNAME=tenant@thingsboard.org
+export REST_AUTH_PASSWORD=tenant
+export MQTT_TRANSPORT_BASE_URL=tcp://your-tb-instance:1883
+export HTTP_TRANSPORT_BASE_URL=http://your-tb-instance:8080
+export COAP_TRANSPORT_BASE_URL=coap://your-tb-instance:5683
+
+java -jar target/tb-monitoring-*.jar
 ```
 
-Edit this *.env* file:
+JVM tuning (heap, GC, etc.) - set `JDK_JAVA_OPTIONS`, which the `java` launcher itself reads
+natively (JDK 9+):
+
 ```bash
-nano .env
+export JDK_JAVA_OPTIONS="-Xmx256m -XX:+UseG1GC -XX:+HeapDumpOnOutOfMemoryError"
 ```
 
-and put next content into the text file (modify it according to your test goals):
+## Docker
+
 ```bash
-REST_URL=http://IP_ADDRESS_OF_TB_INSTANCE:9090
-# IP_ADDRESS_OF_TB_INSTANCE is your local IP address if you run ThingsBoard on your dev machine in docker
-# Port should be modified as well if needed 
-REST_WEB_SOCKET_URL=ws://IP_ADDRESS_OF_TB_INSTANCE:9090/api/ws/plugins/telemetry?token
-REST_USERNAME=tenant@thingsboard.org
-REST_PASSWORD=tenant
-
-MQTT_HOST=IP_ADDRESS_OF_TB_INSTANCE
-# IP_ADDRESS_OF_TB_INSTANCE is your local IP address if you run ThingsBoard on your dev machine in docker
-MQTT_PORT=1883
-
-DEVICE_API=HTTP
-DEVICE_COUNT=3
-
-PUBLISH_PAUSE=5000
-
-PERFORMANCE_DURATION=3000
-
-EMAIL_ALERT_EMAILS=YOUR_EMAIL_ADDRESSES
-EMAIL_ALERT_PERIOD=60
-EMAIL_STATUS_EMAIL=YOUR_EMAIL_ADDRESSES
-EMAIL_STATUS_PERIOD=360
+mvn package -DskipTests
+docker build -f docker/Dockerfile -t tb-monitoring .
+docker run -d --env-file docker/.env --name tb-monitoring tb-monitoring
+docker logs -f tb-monitoring
 ```
 
-Where: 
-    
-- `REST_URL`                     - Rest URL of the TB instance
-- `REST_WEB_SOCKET_URL`          - Web Socket URL of the TB instance
-- `REST_USERNAME`                - Login of the user 
-- `REST_PASSWORD`                - Password of the user
-- `MQTT_HOST`                    - URL of the ThingsBoard MQTT broker
-- `MQTT_PORT`                    - Port of the ThingsBoard MQTT broker
-- `DEVICE_API`                   - Use MQTT or HTTP Device API for send messages
-- `DEVICE_COUNT`                 - Device count to which the messages will be sent
-- `PUBLISH_PAUSE`                - Pause between messages for a single simulated device in milliseconds
-- `PERFORMANCE_DURATION`         - Time for processing of a single message to determine whether the TB instance is working well in milliseconds
-- `EMAIL_ALERT_EMAILS`           - Comma separated list of emails to send an alert in case of TB env troubles
-- `EMAIL_ALERT_PERIOD`           - Time between sending the alert emails (in minutes)
-- `EMAIL_STATUS_EMAIL`           - Comma separated list of emails to send a status of the script
-- `EMAIL_STATUS_PERIOD`          - Time between sending the script status emails (in minutes)
+`docker/.env` has a starter set of variables — copy and edit it for your deployment.
 
-  
-Once params are configured to run monitoring tool type from the folder where configuration file is located:
-```bash
-docker run -d --env-file .env --name tb-monitoring-tool thingsboard/tb-monitoring-tool
-```
+Multi-arch (amd64/arm64) build — the jar is pure JVM bytecode, only the base image needs
+both platforms:
 
-To see logs of the particular container run command:
 ```bash
-docker logs -f tb-monitoring-tool
+docker buildx build --platform linux/amd64,linux/arm64 -f docker/Dockerfile -t <repo>:tag --push .
 ```

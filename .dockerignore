@@ -1,0 +1,12 @@
+.git
+.idea
+src
+pom.xml
+README.md
+LICENSE
+target/classes
+target/test-classes
+target/maven-archiver
+target/maven-status
+target/generated-sources
+target/surefire-reports
