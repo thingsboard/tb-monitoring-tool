@@ -284,6 +284,11 @@ public class MonitoringEntityService {
         return link;
     }
 
+    // The version is stashed inside `configuration` (part of the same saveDashboard() call) rather
+    // than as a separate saved attribute: ThingsBoard CE has no support for attribute writes on
+    // DASHBOARD entities ("Not Implemented!", confirmed on CE 4.2.1.1/4.3.1.4/4.4.0-SNAPSHOT) -
+    // only PE does. Piggybacking on the configuration payload that's already rewritten on every
+    // update works identically on both editions and costs no extra REST call.
     Dashboard getOrCreateMonitoringDashboard() {
         ObjectNode dashboardDescriptor = (ObjectNode) ResourceUtils.getResource(DASHBOARD_RESOURCE_PATH);
         JsonNode versionNode = dashboardDescriptor.remove(VERSION_ATTRIBUTE_KEY);
@@ -291,11 +296,11 @@ public class MonitoringEntityService {
             throw new IllegalStateException(DASHBOARD_RESOURCE_PATH + " is missing a top-level \"" + VERSION_ATTRIBUTE_KEY + "\" field");
         }
         int newVersion = versionNode.asInt();
+        ((ObjectNode) dashboardDescriptor.get("configuration")).put(VERSION_ATTRIBUTE_KEY, newVersion);
 
         Dashboard existing = findDashboardByTitle(DASHBOARD_TITLE).orElse(null);
         if (existing != null) {
-            int currentVersion = tbClient.getAttributeKvEntries(existing.getId(), List.of(VERSION_ATTRIBUTE_KEY)).stream()
-                    .findFirst().map(KvEntry::getValueAsString).map(Integer::parseInt).orElse(0);
+            int currentVersion = existing.getConfiguration().path(VERSION_ATTRIBUTE_KEY).asInt(0);
             if (currentVersion == newVersion) {
                 log.debug("Found Monitoring dashboard '{}' with id {}, version is the same ({})", existing.getTitle(), existing.getId(), currentVersion);
                 return existing;
@@ -304,19 +309,13 @@ public class MonitoringEntityService {
             Dashboard updated = JacksonUtil.OBJECT_MAPPER.convertValue(dashboardDescriptor, Dashboard.class);
             updated.setId(existing.getId());
             updated.setTitle(DASHBOARD_TITLE);
-            return saveDashboardWithVersion(updated, newVersion);
+            return tbClient.saveDashboard(updated);
         }
 
         Dashboard dashboardFromResource = JacksonUtil.OBJECT_MAPPER.convertValue(dashboardDescriptor, Dashboard.class);
         dashboardFromResource.setTitle(DASHBOARD_TITLE);
-        Dashboard saved = saveDashboardWithVersion(dashboardFromResource, newVersion);
+        Dashboard saved = tbClient.saveDashboard(dashboardFromResource);
         log.info("Created Monitoring dashboard '{}' with id {}", saved.getTitle(), saved.getId());
-        return saved;
-    }
-
-    private Dashboard saveDashboardWithVersion(Dashboard dashboard, int version) {
-        Dashboard saved = tbClient.saveDashboard(dashboard);
-        tbClient.saveEntityAttributesV2(saved.getId(), DataConstants.SERVER_SCOPE, JacksonUtil.newObjectNode().put(VERSION_ATTRIBUTE_KEY, version));
         return saved;
     }
 

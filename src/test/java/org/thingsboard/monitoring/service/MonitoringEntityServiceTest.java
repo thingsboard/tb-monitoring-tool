@@ -23,13 +23,11 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.thingsboard.monitoring.client.TbClient;
 import org.thingsboard.monitoring.config.integration.HttpIntegrationMonitoringConfig;
 import org.thingsboard.monitoring.config.integration.IntegrationMonitoringTarget;
+import org.thingsboard.common.util.JacksonUtil;
 import org.thingsboard.monitoring.util.ResourceUtils;
 import org.thingsboard.server.common.data.Dashboard;
 import org.thingsboard.server.common.data.DashboardInfo;
 import org.thingsboard.server.common.data.id.DashboardId;
-import org.thingsboard.server.common.data.kv.AttributeKvEntry;
-import org.thingsboard.server.common.data.kv.BaseAttributeKvEntry;
-import org.thingsboard.server.common.data.kv.StringDataEntry;
 import org.thingsboard.server.common.data.page.PageData;
 import org.thingsboard.server.common.data.page.PageLink;
 
@@ -47,9 +45,10 @@ import static org.mockito.Mockito.when;
 // Covers the delegation surface this PR added to MonitoringEntityService (isPe(),
 // checkEntities(IntegrationMonitoringConfig, ...)), the public dashboard link building (this PR
 // simplified it from a reflection-based TbClient.baseURL read to a plain getter), and dashboard
-// versioning (the largest new logic this PR added to this class, modeled on the pre-existing rule
-// chain versioning above it). The rule chain/asset/device-provisioning logic predates this PR and
-// isn't covered here.
+// versioning (the largest new logic this PR added to this class). The version lives inside
+// Dashboard.configuration rather than as a saved attribute - ThingsBoard CE has no support for
+// attribute writes on DASHBOARD entities ("Not Implemented!"), only PE does. The rule
+// chain/asset/device-provisioning logic predates this PR and isn't covered here.
 @ExtendWith(MockitoExtension.class)
 class MonitoringEntityServiceTest {
 
@@ -121,20 +120,19 @@ class MonitoringEntityServiceTest {
         Dashboard saved = entityService.getOrCreateMonitoringDashboard();
 
         assertThat(saved.getTitle()).isEqualTo(DASHBOARD_TITLE);
-        verify(tbClient).saveEntityAttributesV2(eq(saved.getId()), any(), any());
+        assertThat(saved.getConfiguration().get("version").asInt()).isEqualTo(currentDashboardResourceVersion());
+        verify(tbClient, never()).saveEntityAttributesV2(any(), any(), any());
     }
 
     @Test
     void reusesExistingDashboardWhenVersionMatches() {
         Dashboard existing = new Dashboard(new DashboardId(UUID.randomUUID()));
         existing.setTitle(DASHBOARD_TITLE);
+        existing.setConfiguration(JacksonUtil.newObjectNode().put("version", currentDashboardResourceVersion()));
         DashboardInfo existingInfo = new DashboardInfo(existing);
         when(tbClient.getTenantDashboards(any(PageLink.class)))
                 .thenReturn(new PageData<>(List.of(existingInfo), 1, 1, false));
         when(tbClient.getDashboardById(existing.getId())).thenReturn(Optional.of(existing));
-
-        AttributeKvEntry versionEntry = new BaseAttributeKvEntry(new StringDataEntry("version", String.valueOf(currentDashboardResourceVersion())), System.currentTimeMillis());
-        when(tbClient.getAttributeKvEntries(eq(existing.getId()), any())).thenReturn(List.of(versionEntry));
 
         Dashboard result = entityService.getOrCreateMonitoringDashboard();
 
@@ -143,24 +141,42 @@ class MonitoringEntityServiceTest {
     }
 
     @Test
-    void updatesExistingDashboardWhenVersionDiffers() {
+    void reusesExistingDashboardWhenVersionFieldIsAbsent() {
+        // Dashboards created before this PR (or on CE, where the version used to be a saved
+        // attribute that never worked) have no "version" key in configuration at all - treated as
+        // version 0, same as the pre-existing rule chain versioning's default.
         Dashboard existing = new Dashboard(new DashboardId(UUID.randomUUID()));
         existing.setTitle(DASHBOARD_TITLE);
+        existing.setConfiguration(JacksonUtil.newObjectNode());
         DashboardInfo existingInfo = new DashboardInfo(existing);
         when(tbClient.getTenantDashboards(any(PageLink.class)))
                 .thenReturn(new PageData<>(List.of(existingInfo), 1, 1, false));
         when(tbClient.getDashboardById(existing.getId())).thenReturn(Optional.of(existing));
+        when(tbClient.saveDashboard(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        AttributeKvEntry versionEntry = new BaseAttributeKvEntry(new StringDataEntry("version", String.valueOf(currentDashboardResourceVersion() + 1)), System.currentTimeMillis());
-        when(tbClient.getAttributeKvEntries(eq(existing.getId()), any())).thenReturn(List.of(versionEntry));
+        entityService.getOrCreateMonitoringDashboard();
+
+        verify(tbClient).saveDashboard(any());
+    }
+
+    @Test
+    void updatesExistingDashboardWhenVersionDiffers() {
+        Dashboard existing = new Dashboard(new DashboardId(UUID.randomUUID()));
+        existing.setTitle(DASHBOARD_TITLE);
+        existing.setConfiguration(JacksonUtil.newObjectNode().put("version", currentDashboardResourceVersion() + 1));
+        DashboardInfo existingInfo = new DashboardInfo(existing);
+        when(tbClient.getTenantDashboards(any(PageLink.class)))
+                .thenReturn(new PageData<>(List.of(existingInfo), 1, 1, false));
+        when(tbClient.getDashboardById(existing.getId())).thenReturn(Optional.of(existing));
         when(tbClient.saveDashboard(any())).thenAnswer(inv -> inv.getArgument(0));
 
         Dashboard result = entityService.getOrCreateMonitoringDashboard();
 
         assertThat(result.getId()).isEqualTo(existing.getId());
         assertThat(result.getTitle()).isEqualTo(DASHBOARD_TITLE);
+        assertThat(result.getConfiguration().get("version").asInt()).isEqualTo(currentDashboardResourceVersion());
         verify(tbClient).saveDashboard(any());
-        verify(tbClient).saveEntityAttributesV2(eq(existing.getId()), any(), any());
+        verify(tbClient, never()).saveEntityAttributesV2(any(), any(), any());
     }
 
 }
