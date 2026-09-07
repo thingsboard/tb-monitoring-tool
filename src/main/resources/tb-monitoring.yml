@@ -113,6 +113,50 @@ monitoring:
         # To add more targets, use following environment variables:
         # monitoring.transports.lwm2m.targets[1].base_url, monitoring.transports.lwm2m.targets[2].base_url, etc.
 
+  # Integrations Framework is PE-only. Enabled by default regardless - IntegrationsMonitoringService
+  # detects the target's edition at startup and skips these checks entirely against a CE target,
+  # so there's nothing to turn off by hand when pointing this at CE.
+  integrations:
+    http:
+      # Enable HTTP integration checks
+      enabled: '${HTTP_INTEGRATION_MONITORING_ENABLED:true}'
+      # HTTP request timeout in milliseconds
+      request_timeout_ms: '${HTTP_INTEGRATION_REQUEST_TIMEOUT_MS:4000}'
+      target:
+        # HTTP integration base url, http://DOMAIN by default
+        base_url: '${HTTP_INTEGRATION_BASE_URL:http://${monitoring.domain}}'
+        # Whether to monitor IPs associated with the domain from base url
+        check_domain_ips: '${HTTP_INTEGRATION_CHECK_DOMAIN_IPS:false}'
+        # Prefix for the target name
+        name_prefix: '${HTTP_INTEGRATION_TARGET_NAME_PREFIX:}'
+    coap:
+      # Enable CoAP integration checks
+      enabled: '${COAP_INTEGRATION_MONITORING_ENABLED:true}'
+      # CoAP request timeout in milliseconds
+      request_timeout_ms: '${COAP_INTEGRATION_REQUEST_TIMEOUT_MS:4000}'
+      target:
+        # CoAP integration base url, coap://DOMAIN by default
+        base_url: '${COAP_INTEGRATION_BASE_URL:coap://${monitoring.domain}}'
+        # Whether to monitor IPs associated with the domain from base url
+        check_domain_ips: '${COAP_INTEGRATION_CHECK_DOMAIN_IPS:false}'
+        # Prefix for the target name
+        name_prefix: '${COAP_INTEGRATION_TARGET_NAME_PREFIX:}'
+    mqtt:
+      # Enable MQTT integration checks
+      enabled: '${MQTT_INTEGRATION_MONITORING_ENABLED:true}'
+      # MQTT request timeout in milliseconds
+      request_timeout_ms: '${MQTT_INTEGRATION_REQUEST_TIMEOUT_MS:4000}'
+      # Username the integration's own outbound connection to the broker authenticates with -
+      # must be whatever that broker actually requires; blank/anonymous connections are commonly rejected
+      username: '${MQTT_INTEGRATION_USERNAME:}'
+      target:
+        # MQTT integration base url, tcp://DOMAIN:1883 by default
+        base_url: '${MQTT_INTEGRATION_BASE_URL:tcp://${monitoring.domain}:1883}'
+        # Whether to monitor IPs associated with the domain from base url
+        check_domain_ips: '${MQTT_INTEGRATION_CHECK_DOMAIN_IPS:false}'
+        # Prefix for the target name
+        name_prefix: '${MQTT_INTEGRATION_TARGET_NAME_PREFIX:}'
+
   edqs:
     enabled: "${EDQS_MONITORING_ENABLED:false}"
 
