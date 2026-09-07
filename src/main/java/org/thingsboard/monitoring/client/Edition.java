@@ -13,25 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.thingsboard.monitoring.config.integration;
+package org.thingsboard.monitoring.client;
 
-import lombok.Data;
-import org.thingsboard.monitoring.data.notification.ShortNameProvider;
-
-@Data
-public class IntegrationInfo implements ShortNameProvider {
-
-    private final IntegrationType type;
-    private final String baseUrl;
-
-    @Override
-    public String getShortName() {
-        return type.getName() + " integration";
-    }
-
-    @Override
-    public String toString() {
-        return String.format("*%s integration* (%s)", type.getName(), baseUrl);
-    }
-
+public enum Edition {
+    CE, PE
 }

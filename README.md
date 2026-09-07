@@ -29,7 +29,9 @@ mvn package -DskipTests
 
 `common:data`/`common:util`/`rest-client` are pinned to a fixed release published on
 `repo.thingsboard.io` (not a SNAPSHOT) — this repo builds standalone, no need to clone or
-build the main `thingsboard` monorepo.
+build the main `thingsboard` monorepo. The pinned version carries a `PE` suffix (see
+`pom.xml`) because the Integrations Framework monitoring below needs PE-only data classes
+(`Integration`, `Converter`, `EntityGroup`) that the plain CE artifact doesn't have.
 
 ## Running
 

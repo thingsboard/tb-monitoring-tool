@@ -19,6 +19,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
+import java.util.Map;
+
 @Component
 @ConditionalOnProperty(name = "monitoring.integrations.http.enabled", havingValue = "true")
 @ConfigurationProperties(prefix = "monitoring.integrations.http")
@@ -27,6 +29,11 @@ public class HttpIntegrationMonitoringConfig extends IntegrationMonitoringConfig
     @Override
     public IntegrationType getIntegrationType() {
         return IntegrationType.HTTP;
+    }
+
+    @Override
+    public Map<String, String> buildTemplateParams(IntegrationMonitoringTarget target, String routingKey) {
+        return baseUrlTemplateParams(target, routingKey);
     }
 
 }

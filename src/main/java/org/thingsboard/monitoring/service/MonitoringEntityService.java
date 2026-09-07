@@ -16,25 +16,22 @@
 package org.thingsboard.monitoring.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.HttpClientErrorException;
 import org.thingsboard.common.util.JacksonUtil;
-import org.thingsboard.common.util.RegexUtils;
 import org.thingsboard.monitoring.client.TbClient;
+import org.thingsboard.monitoring.config.DeviceConfig;
 import org.thingsboard.monitoring.config.integration.IntegrationMonitoringConfig;
 import org.thingsboard.monitoring.config.integration.IntegrationMonitoringTarget;
-import org.thingsboard.monitoring.config.integration.IntegrationType;
-import org.thingsboard.monitoring.config.integration.MqttIntegrationMonitoringConfig;
-import org.thingsboard.monitoring.config.transport.DeviceConfig;
 import org.thingsboard.monitoring.config.transport.TransportMonitoringConfig;
 import org.thingsboard.monitoring.config.transport.TransportMonitoringTarget;
 import org.thingsboard.monitoring.config.transport.TransportType;
 import org.thingsboard.monitoring.util.ResourceUtils;
+import org.thingsboard.monitoring.util.SearchUtils;
 import org.thingsboard.server.common.data.DataConstants;
 import org.thingsboard.server.common.data.Dashboard;
 import org.thingsboard.server.common.data.DashboardInfo;
@@ -42,20 +39,10 @@ import org.thingsboard.server.common.data.Device;
 import org.thingsboard.server.common.data.DeviceProfile;
 import org.thingsboard.server.common.data.DeviceProfileType;
 import org.thingsboard.server.common.data.DeviceTransportType;
-import org.thingsboard.server.common.data.EntityType;
-import org.thingsboard.server.common.data.ShortCustomerInfo;
 import org.thingsboard.server.common.data.TbResource;
-import org.thingsboard.server.common.data.User;
 import org.thingsboard.server.common.data.asset.Asset;
 import org.thingsboard.server.common.data.cf.CalculatedField;
-import org.thingsboard.server.common.data.converter.Converter;
-import org.thingsboard.server.common.data.group.EntityGroup;
-import org.thingsboard.server.common.data.group.EntityGroupInfo;
-import org.thingsboard.server.common.data.id.ConverterId;
 import org.thingsboard.server.common.data.id.DashboardId;
-import org.thingsboard.server.common.data.id.EntityId;
-import org.thingsboard.server.common.data.id.EntityGroupId;
-import org.thingsboard.server.common.data.integration.Integration;
 import org.thingsboard.server.common.data.page.PageData;
 import org.thingsboard.server.common.data.page.PageLink;
 import org.thingsboard.server.common.data.cf.CalculatedFieldType;
@@ -83,14 +70,9 @@ import org.thingsboard.server.common.data.rule.RuleChainType;
 import org.thingsboard.server.common.data.security.DeviceCredentials;
 import org.thingsboard.server.common.data.security.DeviceCredentialsType;
 
-import java.net.URI;
-import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
-import java.util.UUID;
 import java.util.stream.Collectors;
 
 import static org.thingsboard.monitoring.service.BaseHealthChecker.TEST_CF_TELEMETRY_KEY;
@@ -103,8 +85,11 @@ public class MonitoringEntityService {
 
     private static final String DASHBOARD_TITLE = "[Monitoring] Cloud monitoring";
     private static final String DASHBOARD_RESOURCE_PATH = "dashboard_cloud_monitoring.json";
+    private static final String VERSION_ATTRIBUTE_KEY = "version";
 
     private final TbClient tbClient;
+    private final PublicSharingService publicSharingService;
+    private final IntegrationEntityService integrationEntityService;
 
     @Value("${monitoring.calculated_fields.enabled:true}")
     private boolean calculatedFieldsMonitoringEnabled;
@@ -122,133 +107,33 @@ public class MonitoringEntityService {
         Map<String, String> attributes = tbClient.getAttributeKvEntries(ruleChainId, attributeKeys).stream()
                 .collect(Collectors.toMap(KvEntry::getKey, KvEntry::getValueAsString));
 
-        int currentVersion = Integer.parseInt(attributes.getOrDefault("version", "0"));
+        int currentVersion = Integer.parseInt(attributes.getOrDefault(VERSION_ATTRIBUTE_KEY, "0"));
         int newVersion = ruleChainDescriptor.get("version").asInt();
         if (currentVersion == newVersion) {
             log.debug("Not updating rule chain, version is the same ({})", currentVersion);
         } else {
             log.info("Updating rule chain '{}' from version {} to {}", ruleChain.getName(), currentVersion, newVersion);
 
-            String metadataJson = RegexUtils.replace(ruleChainDescriptor.get("metadata").toString(),
-                    "\\$\\{MONITORING:(.+?)}", matchResult -> {
-                        String key = matchResult.group(1);
-                        String value = attributes.get(key);
-                        if (value == null) {
-                            throw new IllegalArgumentException("No attribute found for key " + key);
-                        }
-                        log.info("Using {}: {}", key, value);
-                        return value;
-                    });
+            String metadataJson = ResourceUtils.substitutePlaceholders(ruleChainDescriptor.get("metadata").toString(), attributes,
+                    "No attribute found for key %s", (key, value) -> log.info("Using {}: {}", key, value));
             RuleChainMetaData metaData = JacksonUtil.fromString(metadataJson, RuleChainMetaData.class);
             metaData.setRuleChainId(ruleChainId);
             tbClient.saveRuleChainMetaData(metaData);
             tbClient.saveEntityAttributesV2(ruleChainId, DataConstants.SERVER_SCOPE, JacksonUtil.newObjectNode()
-                    .put("version", newVersion));
+                    .put(VERSION_ATTRIBUTE_KEY, newVersion));
         }
 
         Asset asset = getOrCreateMonitoringAsset();
         Dashboard dashboard = getOrCreateMonitoringDashboard();
 
-        makeAssetPublic(asset);
-        makeDashboardPublic(dashboard);
+        publicSharingService.makeAssetPublic(asset);
+        publicSharingService.makeDashboardPublic(dashboard);
 
         this.dashboardId = Optional.ofNullable(dashboard).map(Dashboard::getId).orElse(null);
     }
 
-    // Probed once and cached, so a single build monitors both CE and PE targets.
-    private Boolean pe;
-
     public boolean isPe() {
-        if (pe == null) {
-            pe = tbClient.getSystemVersionInfo()
-                    .map(info -> info.path("type").asText(""))
-                    .filter(type -> !type.isEmpty())
-                    .map(type -> {
-                        boolean result = "PE".equalsIgnoreCase(type);
-                        log.info("Detected ThingsBoard edition from /api/system/info (type {}): {}", type, result ? "PE" : "CE");
-                        return result;
-                    })
-                    .orElseGet(this::probeIsPe);
-        }
-        return pe;
-    }
-
-    // Fallback for the unlikely case /api/system/info doesn't return a "type" field.
-    private boolean probeIsPe() {
-        boolean result;
-        try {
-            tbClient.getEntityGroupsByType(EntityType.CUSTOMER);
-            result = true;
-        } catch (Exception e) {
-            result = false;
-        }
-        log.info("Detected ThingsBoard edition by probing a PE-only endpoint: {}", result ? "PE" : "CE");
-        return result;
-    }
-
-    private void makeAssetPublic(Asset asset) {
-        if (isPe()) {
-            addToPublicGroup(asset.getId(), EntityType.ASSET);
-        } else {
-            tbClient.assignAssetToPublicCustomer(asset.getId());
-        }
-    }
-
-    private void makeDashboardPublic(Dashboard dashboard) {
-        if (isPe()) {
-            addToPublicGroup(dashboard.getId(), EntityType.DASHBOARD);
-        } else {
-            tbClient.assignDashboardToPublicCustomer(dashboard.getId());
-        }
-    }
-
-    private void addToPublicGroup(EntityId entityId, EntityType type) {
-        EntityGroupInfo group = getOrCreatePublicGroup(type);
-        if (!isInGroup(group.getId(), entityId)) {
-            tbClient.addEntitiesToEntityGroup(group.getId(), List.of(entityId));
-        }
-    }
-
-    // Unlike most "get by id" RestClient methods, getGroupEntity() doesn't map "not found" to an
-    // empty Optional - it throws a 400 with this specific message instead.
-    private boolean isInGroup(EntityGroupId groupId, EntityId entityId) {
-        try {
-            return tbClient.getGroupEntity(groupId, entityId).isPresent();
-        } catch (HttpClientErrorException e) {
-            String body = e.getResponseBodyAsString();
-            if (e.getStatusCode() == HttpStatus.BAD_REQUEST && body != null && body.contains("not present in entity group")) {
-                return false;
-            }
-            throw e;
-        }
-    }
-
-    // Keyed by type, not just for the dashboards group - getDashboardPublicLink() calls this again
-    // right after makeDashboardPublic() already fetched/created it.
-    private final Map<EntityType, EntityGroupInfo> publicGroups = new EnumMap<>(EntityType.class);
-
-    private EntityGroupInfo getOrCreatePublicGroup(EntityType type) {
-        EntityGroupInfo cached = publicGroups.get(type);
-        if (cached != null) {
-            return cached;
-        }
-        String groupName = "[Monitoring] Public " + type.name().toLowerCase() + "s";
-        EntityId ownerId = tbClient.getUser().map(User::getOwnerId).orElseThrow();
-        EntityGroupInfo group = tbClient.getEntityGroupInfoByOwnerAndNameAndType(ownerId, type, groupName)
-                .orElseGet(() -> {
-                    EntityGroup newGroup = new EntityGroup();
-                    newGroup.setName(groupName);
-                    newGroup.setType(type);
-                    newGroup.setOwnerId(ownerId);
-                    log.info("Creating new public entity group '{}'", groupName);
-                    return tbClient.saveEntityGroup(newGroup);
-                });
-        if (!group.isPublic()) {
-            tbClient.makeEntityGroupPublic(group.getId());
-            group = tbClient.getEntityGroupById(group.getId()).orElse(group);
-        }
-        publicGroups.put(type, group);
-        return group;
+        return publicSharingService.isPe();
     }
 
     public Asset getOrCreateMonitoringAsset() {
@@ -330,8 +215,8 @@ public class MonitoringEntityService {
     private DeviceProfile getOrCreateDeviceProfile(TransportMonitoringConfig config, TransportMonitoringTarget target) {
         TransportType transportType = config.getTransportType();
         String profileName = String.format("%s %s (%s)", target.getNamePrefix(), transportType.getName(), target.getQueue()).trim();
-        DeviceProfile deviceProfile = tbClient.getDeviceProfiles(new PageLink(1, 0, profileName)).getData()
-                .stream().findFirst().orElse(null);
+        DeviceProfile deviceProfile = SearchUtils.findByExactName(() -> tbClient.getDeviceProfiles(new PageLink(SearchUtils.DEFAULT_PAGE_SIZE, 0, profileName)), profileName, DeviceProfile::getName)
+                .orElse(null);
         if (deviceProfile != null) {
             return deviceProfile;
         }
@@ -386,7 +271,7 @@ public class MonitoringEntityService {
             if (dashboardId == null) {
                 return link;
             }
-            String publicCustomerId = isPe() ? getPublicCustomerIdPe() : getPublicCustomerIdCe();
+            String publicCustomerId = publicSharingService.getPublicCustomerId(dashboardId);
             if (publicCustomerId != null) {
                 link = buildPublicDashboardLink(dashboardId, publicCustomerId);
                 log.info("Public Monitoring dashboard link: {}", link);
@@ -399,146 +284,55 @@ public class MonitoringEntityService {
         return link;
     }
 
-    private String getPublicCustomerIdCe() {
-        Optional<DashboardInfo> infoOpt = tbClient.getDashboardInfoById(dashboardId);
-        if (infoOpt.isEmpty()) {
-            return null;
+    Dashboard getOrCreateMonitoringDashboard() {
+        ObjectNode dashboardDescriptor = (ObjectNode) ResourceUtils.getResource(DASHBOARD_RESOURCE_PATH);
+        JsonNode versionNode = dashboardDescriptor.remove(VERSION_ATTRIBUTE_KEY);
+        if (versionNode == null) {
+            throw new IllegalStateException(DASHBOARD_RESOURCE_PATH + " is missing a top-level \"" + VERSION_ATTRIBUTE_KEY + "\" field");
         }
-        Set<ShortCustomerInfo> customers = infoOpt.get().getAssignedCustomers();
-        if (customers == null) {
-            return null;
-        }
-        return customers.stream()
-                .filter(ShortCustomerInfo::isPublic)
-                .map(c -> c.getCustomerId().getId().toString())
-                .findFirst().orElse(null);
-    }
+        int newVersion = versionNode.asInt();
 
-    private String getPublicCustomerIdPe() {
-        EntityGroupInfo group = getOrCreatePublicGroup(EntityType.DASHBOARD);
-        JsonNode additionalInfo = group.getAdditionalInfo();
-        if (additionalInfo != null && additionalInfo.has("publicCustomerId")) {
-            return additionalInfo.get("publicCustomerId").asText();
-        }
-        return null;
-    }
-
-    private Dashboard getOrCreateMonitoringDashboard() {
         Dashboard existing = findDashboardByTitle(DASHBOARD_TITLE).orElse(null);
         if (existing != null) {
-            log.debug("Found Monitoring dashboard '{}' with id {}", existing.getTitle(), existing.getId());
-            return existing;
+            int currentVersion = tbClient.getAttributeKvEntries(existing.getId(), List.of(VERSION_ATTRIBUTE_KEY)).stream()
+                    .findFirst().map(KvEntry::getValueAsString).map(Integer::parseInt).orElse(0);
+            if (currentVersion == newVersion) {
+                log.debug("Found Monitoring dashboard '{}' with id {}, version is the same ({})", existing.getTitle(), existing.getId(), currentVersion);
+                return existing;
+            }
+            log.info("Updating Monitoring dashboard '{}' from version {} to {}", existing.getTitle(), currentVersion, newVersion);
+            Dashboard updated = JacksonUtil.OBJECT_MAPPER.convertValue(dashboardDescriptor, Dashboard.class);
+            updated.setId(existing.getId());
+            updated.setTitle(DASHBOARD_TITLE);
+            return saveDashboardWithVersion(updated, newVersion);
         }
 
-        Dashboard dashboardFromResource = ResourceUtils.getResource(DASHBOARD_RESOURCE_PATH, Dashboard.class);
+        Dashboard dashboardFromResource = JacksonUtil.OBJECT_MAPPER.convertValue(dashboardDescriptor, Dashboard.class);
         dashboardFromResource.setTitle(DASHBOARD_TITLE);
-        //Optional.ofNullable(existing).map(Dashboard::getId).ifPresent(dashboardFromResource::setId);
-        Dashboard saved = tbClient.saveDashboard(dashboardFromResource);
+        Dashboard saved = saveDashboardWithVersion(dashboardFromResource, newVersion);
         log.info("Created Monitoring dashboard '{}' with id {}", saved.getTitle(), saved.getId());
         return saved;
     }
 
+    private Dashboard saveDashboardWithVersion(Dashboard dashboard, int version) {
+        Dashboard saved = tbClient.saveDashboard(dashboard);
+        tbClient.saveEntityAttributesV2(saved.getId(), DataConstants.SERVER_SCOPE, JacksonUtil.newObjectNode().put(VERSION_ATTRIBUTE_KEY, version));
+        return saved;
+    }
+
     private Optional<Dashboard> findDashboardByTitle(String title) {
-        // Use text search first and then filter by exact title
-        PageData<DashboardInfo> page = tbClient.getTenantDashboards(new PageLink(10, 0, title));
-        return page.getData().stream()
-                .filter(info -> title.equals(info.getTitle()))
-                .findFirst()
+        return SearchUtils.findByExactName(() -> tbClient.getTenantDashboards(new PageLink(SearchUtils.DEFAULT_PAGE_SIZE, 0, title)), title, DashboardInfo::getTitle)
                 .flatMap(info -> tbClient.getDashboardById(info.getId()));
     }
 
     private String buildPublicDashboardLink(DashboardId dashboardId, String publicCustomerId) {
-        String base = getBaseUrl();
-        return String.format("%s/dashboard/%s?publicId=%s", base, dashboardId.getId().toString(), publicCustomerId);
-    }
-
-    private String getBaseUrl() {
-        // TbClient.baseURL contains the root url, without trailing slash
-        try {
-            var baseUrlField = tbClient.getClass().getSuperclass().getDeclaredField("baseURL");
-            baseUrlField.setAccessible(true);
-            return (String) baseUrlField.get(tbClient);
-        } catch (Exception e) {
-            log.warn("Unable to access baseURL from RestClient. Falling back to http://localhost:8080");
-            return "http://localhost:8080";
-        }
+        return String.format("%s/dashboard/%s?publicId=%s", tbClient.getBaseUrl(), dashboardId.getId().toString(), publicCustomerId);
     }
 
     // Integrations Framework is PE-only; this codepath is only ever exercised when an
     // integration check is enabled in config, which only makes sense against a PE target.
     public void checkEntities(IntegrationMonitoringConfig config, IntegrationMonitoringTarget target) {
-        Device device = getOrCreateIntegrationDevice(config, target);
-        DeviceConfig deviceConfig = new DeviceConfig();
-        deviceConfig.setId(device.getId().toString());
-        deviceConfig.setName(device.getName());
-        target.setDevice(deviceConfig);
-
-        Converter converter = getOrCreateMonitoringConverter();
-        Integration integration = getOrCreateIntegration(config, target, converter.getId());
-        target.setIntegration(integration);
-    }
-
-    private Device getOrCreateIntegrationDevice(IntegrationMonitoringConfig config, IntegrationMonitoringTarget target) {
-        String deviceName = String.format("%s %s integration - %s", target.getNamePrefix(), config.getIntegrationType().getName(), target.getBaseUrl()).trim();
-        return tbClient.getTenantDevice(deviceName)
-                .orElseGet(() -> {
-                    Device device = ResourceUtils.getResource("integration/device.json", Device.class);
-                    device.setName(deviceName);
-                    log.info("Creating new device '{}'", deviceName);
-                    return tbClient.saveDevice(device);
-                });
-    }
-
-    private Converter getOrCreateMonitoringConverter() {
-        String converterName = "[Monitoring] Default converter";
-        return tbClient.getConverters(new PageLink(1, 0, converterName)).getData()
-                .stream().findFirst()
-                .orElseGet(() -> {
-                    Converter converter = ResourceUtils.getResource("integration/converter.json", Converter.class);
-                    converter.setName(converterName);
-                    log.info("Creating new converter '{}'", converterName);
-                    return tbClient.saveConverter(converter);
-                });
-    }
-
-    private Integration getOrCreateIntegration(IntegrationMonitoringConfig config, IntegrationMonitoringTarget target, ConverterId converterId) {
-        String integrationName = String.format("%s %s integration - %s", target.getNamePrefix(), config.getIntegrationType().getName(), target.getBaseUrl()).trim();
-        return tbClient.getIntegrations(new PageLink(1, 0, integrationName)).getData()
-                .stream().findFirst()
-                .orElseGet(() -> {
-                    String routingKey = UUID.randomUUID().toString();
-
-                    List<String> configParams;
-                    if (config instanceof MqttIntegrationMonitoringConfig mqttConfig) {
-                        URI uri = URI.create(target.getBaseUrl());
-                        configParams = List.of(
-                                uri.getHost() /* %1$s */,
-                                String.valueOf(uri.getPort()) /* %2$s */,
-                                routingKey /* %3$s */,
-                                RandomStringUtils.secure().nextNumeric(6) /* client id suffix, %4$s */,
-                                Objects.requireNonNullElse(mqttConfig.getUsername(), "") /* %5$s */
-                        );
-                    } else {
-                        configParams = List.of(
-                                target.getBaseUrl() /* %1$s */,
-                                routingKey /* %2$s */
-                        );
-                    }
-                    // The template's placeholders must be substituted before the text is parsed - a
-                    // numeric field (e.g. MQTT port) can only be filled in with a real JSON number
-                    // this way; parsing first and formatting configuration.toString() afterwards (as
-                    // done for the other fields here) would leave it a quoted string.
-                    String rawTemplate = ResourceUtils.getResourceAsString(
-                            "integration/" + config.getIntegrationType().name().toLowerCase() + "/integration.json");
-                    Integration integration = JacksonUtil.fromString(
-                            String.format(rawTemplate, configParams.toArray()), Integration.class);
-
-                    integration.setName(integrationName);
-                    integration.setDefaultConverterId(converterId);
-                    integration.setRoutingKey(routingKey);
-                    log.info("Creating new integration '{}'", integrationName);
-                    return tbClient.saveIntegration(integration);
-                });
+        integrationEntityService.checkEntities(config, target);
     }
 
 }

@@ -13,23 +13,28 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.thingsboard.monitoring.config.transport;
+package org.thingsboard.monitoring.config;
 
+import com.google.common.base.Strings;
 import lombok.Data;
-import org.apache.commons.lang3.StringUtils;
-import org.thingsboard.server.common.data.security.DeviceCredentials;
 
 import java.util.UUID;
 
 @Data
-public class DeviceConfig {
+public abstract class BaseMonitoringTarget implements MonitoringTarget {
 
-    private UUID id;
-    private String name;
-    private DeviceCredentials credentials;
+    private String baseUrl;
+    private DeviceConfig device; // set manually during initialization
+    private boolean checkDomainIps;
+    private String namePrefix;
 
-    public void setId(String id) {
-        this.id = StringUtils.isNotEmpty(id) ? UUID.fromString(id) : null;
+    @Override
+    public UUID getDeviceId() {
+        return device.getId();
+    }
+
+    public String getNamePrefix() {
+        return Strings.nullToEmpty(namePrefix);
     }
 
 }

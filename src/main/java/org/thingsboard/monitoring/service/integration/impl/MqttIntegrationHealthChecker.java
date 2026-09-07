@@ -15,28 +15,27 @@
  */
 package org.thingsboard.monitoring.service.integration.impl;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import lombok.extern.slf4j.Slf4j;
-import org.eclipse.paho.client.mqttv3.IMqttToken;
-import org.eclipse.paho.client.mqttv3.MqttAsyncClient;
 import org.eclipse.paho.client.mqttv3.MqttClient;
-import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
-import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.context.annotation.Scope;
-import org.springframework.stereotype.Service;
+import org.springframework.stereotype.Component;
 import org.thingsboard.monitoring.config.integration.IntegrationMonitoringTarget;
 import org.thingsboard.monitoring.config.integration.IntegrationType;
 import org.thingsboard.monitoring.config.integration.MqttIntegrationMonitoringConfig;
 import org.thingsboard.monitoring.service.integration.IntegrationHealthChecker;
+import org.thingsboard.monitoring.util.MqttUtils;
 
-@Service
+@Component
 @Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
 @Slf4j
 public class MqttIntegrationHealthChecker extends IntegrationHealthChecker<MqttIntegrationMonitoringConfig> {
 
     private MqttClient mqttClient;
     private String topic;
+    private int qos;
 
     public MqttIntegrationHealthChecker(MqttIntegrationMonitoringConfig config, IntegrationMonitoringTarget target) {
         super(config, target);
@@ -45,21 +44,15 @@ public class MqttIntegrationHealthChecker extends IntegrationHealthChecker<MqttI
     @Override
     protected void initClient() throws Exception {
         if (mqttClient == null || !mqttClient.isConnected()) {
-            String clientId = MqttAsyncClient.generateClientId();
             String userName = target.getIntegration().getConfiguration().get("clientConfiguration").get("credentials").get("username").asText();
-            mqttClient = new MqttClient(target.getBaseUrl(), clientId, new MemoryPersistence());
-            mqttClient.setTimeToWait(config.getRequestTimeoutMs());
-            topic = "monitoring/" + target.getIntegration().getRoutingKey();
 
-            MqttConnectOptions options = new MqttConnectOptions();
-            options.setUserName(userName);
-            // Paho treats connectionTimeout=0 as "wait indefinitely", not "fail fast" - integer
-            // division would truncate any sub-second request_timeout_ms to exactly that
-            options.setConnectionTimeout(Math.max(1, config.getRequestTimeoutMs() / 1000));
-            IMqttToken result = mqttClient.connectWithResult(options);
-            if (result.getException() != null) {
-                throw result.getException();
-            }
+            // Read from the saved Integration rather than rebuilding "monitoring/<routingKey>" here,
+            // so this can't drift from the topicFilters entry in integration/mqtt/integration.json.
+            JsonNode topicFilter = target.getIntegration().getConfiguration().get("topicFilters").get(0);
+            topic = topicFilter.get("filter").asText();
+            qos = topicFilter.get("qos").asInt();
+
+            mqttClient = MqttUtils.connect(target.getBaseUrl(), userName, config.getRequestTimeoutMs());
             log.debug("Initialized MQTT client for URI {}", mqttClient.getServerURI());
         }
     }
@@ -68,7 +61,7 @@ public class MqttIntegrationHealthChecker extends IntegrationHealthChecker<MqttI
     protected void sendTestPayload(String payload) throws Exception {
         MqttMessage message = new MqttMessage();
         message.setPayload(payload.getBytes());
-        message.setQos(1);
+        message.setQos(qos);
         mqttClient.publish(topic, message);
     }
 

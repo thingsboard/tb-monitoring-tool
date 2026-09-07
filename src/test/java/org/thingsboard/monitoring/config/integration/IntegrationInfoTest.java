@@ -17,22 +17,15 @@ package org.thingsboard.monitoring.config.integration;
 
 import org.junit.jupiter.api.Test;
 import org.thingsboard.monitoring.data.notification.ServiceFailureNotification;
-import org.thingsboard.monitoring.data.notification.ShortNameProvider;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class IntegrationInfoTest {
 
     @Test
-    void getShortNameDistinguishesFromTransportWithIPrefix() {
+    void getShortNameDistinguishesFromTransport() {
         IntegrationInfo info = new IntegrationInfo(IntegrationType.MQTT, "https://example.com");
-        assertThat(info.getShortName()).isEqualTo("iMQTT");
-    }
-
-    @Test
-    void implementsShortNameProvider() {
-        IntegrationInfo info = new IntegrationInfo(IntegrationType.HTTP, "https://example.com");
-        assertThat(info).isInstanceOf(ShortNameProvider.class);
+        assertThat(info.getShortName()).isEqualTo("MQTT integration");
     }
 
     @Test
@@ -43,7 +36,7 @@ class IntegrationInfoTest {
         assertThat(notification.getAffectedServices())
                 .singleElement()
                 .extracting("name")
-                .isEqualTo("iCoAP");
+                .isEqualTo("CoAP integration");
     }
 
 }

@@ -16,15 +16,16 @@
 package org.thingsboard.monitoring.config.transport;
 
 import lombok.Data;
-import org.thingsboard.monitoring.config.MonitoringConfig;
+import lombok.EqualsAndHashCode;
+import org.thingsboard.monitoring.config.BaseMonitoringConfig;
 
 import java.util.List;
 
 @Data
-public abstract class TransportMonitoringConfig implements MonitoringConfig<TransportMonitoringTarget> {
+@EqualsAndHashCode(callSuper = true)
+public abstract class TransportMonitoringConfig extends BaseMonitoringConfig<TransportMonitoringTarget> {
 
     private List<TransportMonitoringTarget> targets;
-    private int requestTimeoutMs;
 
     public abstract TransportType getTransportType();
 

@@ -16,21 +16,39 @@
 package org.thingsboard.monitoring.config.integration;
 
 import lombok.Data;
-import org.thingsboard.monitoring.config.MonitoringConfig;
+import lombok.EqualsAndHashCode;
+import org.thingsboard.monitoring.config.BaseMonitoringConfig;
 
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 @Data
-public abstract class IntegrationMonitoringConfig implements MonitoringConfig<IntegrationMonitoringTarget> {
+@EqualsAndHashCode(callSuper = true)
+public abstract class IntegrationMonitoringConfig extends BaseMonitoringConfig<IntegrationMonitoringTarget> {
 
-    private int requestTimeoutMs;
     private IntegrationMonitoringTarget target;
 
+    // Only one target is supported per integration type (unlike transports); a missing `target:`
+    // block just means no checks run for it, rather than an NPE from List.of(null).
     @Override
     public List<IntegrationMonitoringTarget> getTargets() {
-        return List.of(target);
+        return target != null ? List.of(target) : Collections.emptyList();
     }
 
     public abstract IntegrationType getIntegrationType();
+
+    // The ${MONITORING:KEY} params the integration/*/integration.json template for this type needs
+    // to render into a real Integration - every type must decide explicitly, since MQTT's params
+    // are a disjoint set (host/port/client id/username parsed out of the URL) rather than an
+    // extension of the base-URL-only case HTTP/CoAP need.
+    public abstract Map<String, String> buildTemplateParams(IntegrationMonitoringTarget target, String routingKey);
+
+    protected static Map<String, String> baseUrlTemplateParams(IntegrationMonitoringTarget target, String routingKey) {
+        return Map.of(
+                "BASE_URL", target.getBaseUrl(),
+                "ROUTING_KEY", routingKey
+        );
+    }
 
 }
