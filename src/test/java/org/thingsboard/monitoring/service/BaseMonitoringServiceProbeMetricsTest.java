@@ -454,7 +454,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
         TransportMonitoringTarget target = new TransportMonitoringTarget();
         target.setCheckDomainIps(true);
         target.setBaseUrl("tcp://127.0.0.1:1883"); // IP literal - deterministic, no real DNS lookup
-        target.setDevice(new org.thingsboard.monitoring.config.transport.DeviceConfig()); // avoids an
+        target.setDevice(new org.thingsboard.monitoring.config.DeviceConfig()); // avoids an
         // unrelated NPE in the pre-existing stopHealthChecker(healthChecker) call (out of scope here)
         when(healthChecker.getTarget()).thenReturn(target);
 
@@ -468,7 +468,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
         // it's fixed to stop the retired ASSOCIATE (not the parent healthChecker), that's decommissioned's
         // own target, so it needs the same device stub healthChecker's target got above.
         TransportMonitoringTarget decommissionedTarget = new TransportMonitoringTarget();
-        decommissionedTarget.setDevice(new org.thingsboard.monitoring.config.transport.DeviceConfig());
+        decommissionedTarget.setDevice(new org.thingsboard.monitoring.config.DeviceConfig());
         when(decommissioned.getTarget()).thenReturn(decommissionedTarget);
 
         java.util.Map<String, BaseHealthChecker<TransportMonitoringConfig, TransportMonitoringTarget>> associates =

@@ -24,6 +24,7 @@ import org.thingsboard.monitoring.config.integration.HttpIntegrationMonitoringCo
 import org.thingsboard.monitoring.config.integration.IntegrationInfo;
 import org.thingsboard.monitoring.config.integration.IntegrationMonitoringTarget;
 import org.thingsboard.monitoring.config.integration.MqttIntegrationMonitoringConfig;
+import org.thingsboard.monitoring.service.BaseHealthChecker;
 import org.thingsboard.monitoring.service.integration.impl.CoapIntegrationHealthChecker;
 import org.thingsboard.monitoring.service.integration.impl.HttpIntegrationHealthChecker;
 import org.thingsboard.monitoring.service.integration.impl.MqttIntegrationHealthChecker;
@@ -32,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 // Pins down the two implicit contracts every IntegrationHealthChecker relies on: the test payload
 // shape the TBEL decoder in converter.json expects, and the getKey() the dashboard series names
-// (httpIntegrationRequestLatency, etc.) are built from.
+// (ihttpRequestLatency, etc.) are built from.
 class IntegrationHealthCheckerTest {
 
     private static IntegrationMonitoringTarget targetFor(String deviceName) {
@@ -49,7 +50,7 @@ class IntegrationHealthCheckerTest {
         HttpIntegrationHealthChecker checker = new HttpIntegrationHealthChecker(
                 new HttpIntegrationMonitoringConfig(), targetFor("My device"));
 
-        JsonNode payload = JacksonUtil.toJsonNode(checker.createTestPayload("abc-123"));
+        JsonNode payload = JacksonUtil.toJsonNode(checker.createTestPayload("abc-123", BaseHealthChecker.TEST_TELEMETRY_KEY));
 
         assertThat(payload.get("device").asText()).isEqualTo("My device");
         assertThat(payload.get("telemetry").get("testData").asText()).isEqualTo("abc-123");
@@ -61,9 +62,9 @@ class IntegrationHealthCheckerTest {
         CoapIntegrationHealthChecker coap = new CoapIntegrationHealthChecker(new CoapIntegrationMonitoringConfig(), targetFor("d"));
         MqttIntegrationHealthChecker mqtt = new MqttIntegrationHealthChecker(new MqttIntegrationMonitoringConfig(), targetFor("d"));
 
-        assertThat(http.getKey()).isEqualTo("httpIntegration");
-        assertThat(coap.getKey()).isEqualTo("coapIntegration");
-        assertThat(mqtt.getKey()).isEqualTo("mqttIntegration");
+        assertThat(http.getKey()).isEqualTo("ihttp");
+        assertThat(coap.getKey()).isEqualTo("icoap");
+        assertThat(mqtt.getKey()).isEqualTo("imqtt");
     }
 
     @Test
