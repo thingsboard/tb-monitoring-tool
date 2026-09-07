@@ -30,9 +30,9 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>25</maven.compiler.release>
         <pkg.mainClass>org.thingsboard.monitoring.ThingsboardMonitoringApplication</pkg.mainClass>
-
+      
         <tb.version>4.3.1.4PE</tb.version>
-
+      
         <spring-boot.version>3.5.15</spring-boot.version>
         <lombok.version>1.18.46</lombok.version>
         <maven-surefire-plugin.version>3.5.4</maven-surefire-plugin.version>
