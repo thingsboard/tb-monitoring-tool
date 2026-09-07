@@ -70,7 +70,10 @@ public class IncidentManager {
     public synchronized void sendAlert(String message, List<AffectedService> affectedServices) {
         try {
             if (activeIncidentThreadId == null) {
-                if (affectedServices.stream().allMatch(s -> s.status() == AffectedService.Status.RECOVERED)) {
+                // Only skip opening an incident for an explicit "everything recovered" signal - an
+                // empty list (e.g. a Notification that doesn't override getAffectedServices()) must
+                // still open one, or that notification's first alert would be silently dropped.
+                if (!affectedServices.isEmpty() && affectedServices.stream().allMatch(s -> s.status() == AffectedService.Status.RECOVERED)) {
                     return;
                 }
                 incidentStartTime = Instant.now();
@@ -152,9 +155,7 @@ public class IncidentManager {
         if (tagChannel) {
             sb.append("<!channel> ");
         }
-        if (messagePrefix != null && !messagePrefix.isEmpty()) {
-            sb.append("*").append(messagePrefix).append("*");
-        }
+        appendPrefix(sb);
         sb.append(" :rotating_light:");
         Duration elapsed = Duration.between(incidentStartTime, Instant.now());
         if (elapsed.toMinutes() >= 1) {
@@ -246,15 +247,19 @@ public class IncidentManager {
                 ? Duration.between(incidentStartTime, lastAlertTime)
                 : Duration.between(incidentStartTime, Instant.now());
         StringBuilder sb = new StringBuilder();
-        if (messagePrefix != null && !messagePrefix.isEmpty()) {
-            sb.append("*").append(messagePrefix).append("*");
-        }
+        appendPrefix(sb);
         sb.append(" :white_check_mark:");
         sb.append(" (").append(formatDuration(totalDuration)).append(")");
         if (hasAffected()) {
             sb.append(" | ").append(formatAffectedServices()).append("\n");
         }
         return sb.toString();
+    }
+
+    private void appendPrefix(StringBuilder sb) {
+        if (messagePrefix != null && !messagePrefix.isEmpty()) {
+            sb.append("*").append(messagePrefix).append("*");
+        }
     }
 
     private String formatAffectedServices() {

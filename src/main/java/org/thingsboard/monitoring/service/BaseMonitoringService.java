@@ -46,6 +46,8 @@ import org.thingsboard.server.common.data.query.TsValue;
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.UnknownHostException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -55,6 +57,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -272,13 +279,22 @@ public abstract class BaseMonitoringService<C extends MonitoringConfig<T>, T ext
         EntityTypeFilter entityTypeFilter = new EntityTypeFilter();
         entityTypeFilter.setEntityType(EntityType.DEVICE);
         EntityDataPageLink pageLink = new EntityDataPageLink(100, 0, null, new EntityDataSortOrder(new EntityKey(EntityKeyType.ENTITY_FIELD, "name")));
-        EntityDataQuery entityDataQuery = new EntityDataQuery(entityTypeFilter, pageLink,
-                List.of(new EntityKey(EntityKeyType.ENTITY_FIELD, "name"), new EntityKey(EntityKeyType.ENTITY_FIELD, "type")),
-                List.of(new EntityKey(EntityKeyType.TIME_SERIES, "testData")),
-                Collections.emptyList());
 
-        PageData<EntityData> result = tbClient.findEntityDataByQuery(entityDataQuery);
-        Set<UUID> devices = result.getData().stream()
+        // Paginated: a single page would silently drop devices beyond the page size from the
+        // "missing" check below once the fleet grows past it.
+        List<EntityData> allData = new ArrayList<>();
+        PageData<EntityData> page;
+        do {
+            EntityDataQuery entityDataQuery = new EntityDataQuery(entityTypeFilter, pageLink,
+                    List.of(new EntityKey(EntityKeyType.ENTITY_FIELD, "name"), new EntityKey(EntityKeyType.ENTITY_FIELD, "type")),
+                    List.of(new EntityKey(EntityKeyType.TIME_SERIES, TEST_TELEMETRY_KEY)),
+                    Collections.emptyList());
+            page = tbClient.findEntityDataByQuery(entityDataQuery);
+            allData.addAll(page.getData());
+            pageLink = pageLink.nextPageLink();
+        } while (page.hasNext());
+
+        Set<UUID> devices = allData.stream()
                 .map(entityData -> entityData.getEntityId().getId())
                 .collect(Collectors.toSet());
         Set<UUID> missing = Sets.difference(new HashSet<>(this.devices), devices);
@@ -286,13 +302,13 @@ public abstract class BaseMonitoringService<C extends MonitoringConfig<T>, T ext
             throw new ServiceFailureException(MonitoredServiceKey.EDQS, "Missing devices in the response: " + missing);
         }
 
-        result.getData().stream()
+        allData.stream()
                 .filter(entityData -> this.devices.contains(entityData.getEntityId().getId()))
                 .forEach(entityData -> {
                     Map<String, TsValue> values = new HashMap<>(entityData.getLatest().get(EntityKeyType.ENTITY_FIELD));
                     values.putAll(entityData.getLatest().get(EntityKeyType.TIME_SERIES));
 
-                    Stream.of("name", "type", "testData").forEach(key -> {
+                    Stream.of("name", "type", TEST_TELEMETRY_KEY).forEach(key -> {
                         TsValue value = values.get(key);
                         if (value == null || StringUtils.isBlank(value.getValue())) {
                             throw new ServiceFailureException(MonitoredServiceKey.EDQS, "Missing " + key + " for device " + entityData.getEntityId());
@@ -301,10 +317,24 @@ public abstract class BaseMonitoringService<C extends MonitoringConfig<T>, T ext
                 });
     }
 
+    private static final long DNS_RESOLUTION_TIMEOUT_MS = 5000;
+
     @SneakyThrows
     private Set<String> getAssociatedUrls(String baseUrl) {
         URI url = new URI(baseUrl);
-        return Arrays.stream(InetAddress.getAllByName(url.getHost()))
+        InetAddress[] addresses;
+        try {
+            // InetAddress.getAllByName() has no timeout parameter of its own and can block on a
+            // slow/hanging resolver - bound it so a single target can't stall the whole check cycle.
+            addresses = CompletableFuture.supplyAsync(() -> resolveHost(url.getHost()))
+                    .get(DNS_RESOLUTION_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            throw new ServiceFailureException(MonitoredServiceKey.GENERAL,
+                    "DNS resolution for " + url.getHost() + " timed out after " + DNS_RESOLUTION_TIMEOUT_MS + " ms");
+        } catch (ExecutionException e) {
+            throw e.getCause();
+        }
+        return Arrays.stream(addresses)
                 .map(InetAddress::getHostAddress)
                 .map(ip -> {
                     try {
@@ -314,6 +344,14 @@ public abstract class BaseMonitoringService<C extends MonitoringConfig<T>, T ext
                     }
                 })
                 .collect(Collectors.toSet());
+    }
+
+    private static InetAddress[] resolveHost(String host) {
+        try {
+            return InetAddress.getAllByName(host);
+        } catch (UnknownHostException e) {
+            throw new CompletionException(e);
+        }
     }
 
     private List<String> getTestTelemetryKeys() {

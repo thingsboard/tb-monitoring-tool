@@ -28,10 +28,22 @@ import org.thingsboard.monitoring.data.MonitoredServiceKey;
 import org.thingsboard.monitoring.data.ServiceFailureException;
 import org.thingsboard.monitoring.metrics.ProbeMetricsRecorder;
 import org.thingsboard.monitoring.util.TbStopWatch;
+import org.thingsboard.server.common.data.id.DeviceId;
+import org.thingsboard.server.common.data.page.PageData;
+import org.thingsboard.server.common.data.query.EntityData;
+import org.thingsboard.server.common.data.query.EntityKeyType;
+import org.thingsboard.server.common.data.query.TsValue;
 
+import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -536,6 +548,74 @@ public class BaseMonitoringServiceProbeMetricsTest {
         inOrder.verify(probeMetricsRecorder).recordProbe(MonitoredServiceKey.LOGIN, false);
     }
 
+
+    @Test
+    public void checkEdqs_paginatesAcrossMultiplePages_toFindAllDevices() throws Exception {
+        // regression test: checkEdqs() used to query only the first 100-row page and diff the
+        // result against the full device list, so a device that only showed up on page 2+ was
+        // wrongly reported "missing from EDQS" once the fleet grew past the page size.
+        ReflectionTestUtils.setField(service, "checkEdqs", true);
+        UUID deviceOnPage1 = UUID.randomUUID();
+        UUID deviceOnPage2 = UUID.randomUUID();
+        ReflectionTestUtils.setField(service, "devices", new LinkedList<>(List.of(deviceOnPage1, deviceOnPage2)));
+
+        PageData<EntityData> page1 = new PageData<>(List.of(entityDataFor(deviceOnPage1)), 2, 2, true);
+        PageData<EntityData> page2 = new PageData<>(List.of(entityDataFor(deviceOnPage2)), 2, 2, false);
+        when(tbClient.findEntityDataByQuery(any())).thenReturn(page1, page2);
+
+        when(tbClient.logIn()).thenReturn("token");
+        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
+        when(wsClient.waitForReply()).thenReturn(null);
+
+        service.runChecks();
+
+        verify(reporter, never()).serviceFailure(eq(MonitoredServiceKey.EDQS), any());
+        verify(reporter).serviceIsOk(MonitoredServiceKey.EDQS);
+    }
+
+    @Test
+    public void checkEdqs_deviceMissingFromEveryPage_stillReportsFailure() throws Exception {
+        // the pagination fix must not turn checkEdqs() into a no-op - a genuinely missing device
+        // still has to fail the check
+        ReflectionTestUtils.setField(service, "checkEdqs", true);
+        UUID presentDevice = UUID.randomUUID();
+        UUID missingDevice = UUID.randomUUID();
+        ReflectionTestUtils.setField(service, "devices", new LinkedList<>(List.of(presentDevice, missingDevice)));
+
+        PageData<EntityData> onlyPage = new PageData<>(List.of(entityDataFor(presentDevice)), 1, 1, false);
+        when(tbClient.findEntityDataByQuery(any())).thenReturn(onlyPage);
+
+        when(tbClient.logIn()).thenReturn("token");
+        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
+        when(wsClient.waitForReply()).thenReturn(null);
+
+        service.runChecks();
+
+        verify(reporter).serviceFailure(eq(MonitoredServiceKey.EDQS), any());
+    }
+
+    private static EntityData entityDataFor(UUID deviceId) {
+        Map<EntityKeyType, Map<String, TsValue>> latest = new HashMap<>();
+        latest.put(EntityKeyType.ENTITY_FIELD, Map.of("name", new TsValue(0, "device"), "type", new TsValue(0, "default")));
+        latest.put(EntityKeyType.TIME_SERIES, Map.of(BaseHealthChecker.TEST_TELEMETRY_KEY, new TsValue(0, "value")));
+        return new EntityData(new DeviceId(deviceId), true, true, latest, null);
+    }
+
+    @Test
+    public void getAssociatedUrls_resolvesIpLiteral_returnsSameAddress() {
+        // sanity check that wrapping the DNS call in a bounded CompletableFuture (the timeout fix)
+        // didn't change the successful-resolution result
+        Set<String> urls = (Set<String>) ReflectionTestUtils.invokeMethod(service, "getAssociatedUrls", "tcp://127.0.0.1:1883");
+
+        assertThat(urls).containsExactly("tcp://127.0.0.1:1883");
+    }
+
+    @Test
+    public void getAssociatedUrls_unresolvableHost_failsInsteadOfHanging() {
+        // RFC 2606 reserves the .invalid TLD for exactly this - always fails to resolve, fast
+        assertThrows(RuntimeException.class, () ->
+                ReflectionTestUtils.invokeMethod(service, "getAssociatedUrls", "tcp://this-host-does-not-resolve.invalid:1883"));
+    }
 
     private static class TestMonitoringService extends BaseMonitoringService<TransportMonitoringConfig, TransportMonitoringTarget> {
         @Override
