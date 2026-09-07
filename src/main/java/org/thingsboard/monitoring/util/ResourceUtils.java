@@ -18,9 +18,12 @@ package org.thingsboard.monitoring.util;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.SneakyThrows;
 import org.thingsboard.common.util.JacksonUtil;
+import org.thingsboard.common.util.RegexUtils;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
+import java.util.function.BiConsumer;
 
 public class ResourceUtils {
 
@@ -37,7 +40,7 @@ public class ResourceUtils {
     }
 
     // For templates with placeholders that must be substituted before the text is valid JSON
-    // (e.g. a numeric field), so parsing has to happen after String.format, not before.
+    // (e.g. a numeric field), so parsing has to happen after placeholder substitution, not before.
     @SneakyThrows
     public static String getResourceAsString(String path) {
         return new String(getResourceStream(path).readAllBytes(), StandardCharsets.UTF_8);
@@ -45,6 +48,28 @@ public class ResourceUtils {
 
     public static InputStream getResourceAsStream(String path) {
         return getResourceStream(path);
+    }
+
+    // Substitutes every ${MONITORING:KEY} placeholder in `template` with params.get(KEY), failing
+    // loudly on a miss rather than silently leaving the placeholder in place.
+    public static String substitutePlaceholders(String template, Map<String, String> params, String missingKeyErrorMessage) {
+        return substitutePlaceholders(template, params, missingKeyErrorMessage, null);
+    }
+
+    // As above, plus a callback invoked with (key, value) for every placeholder actually substituted.
+    public static String substitutePlaceholders(String template, Map<String, String> params, String missingKeyErrorMessage,
+                                                  BiConsumer<String, String> onSubstitution) {
+        return RegexUtils.replace(template, "\\$\\{MONITORING:(.+?)}", matchResult -> {
+            String key = matchResult.group(1);
+            String value = params.get(key);
+            if (value == null) {
+                throw new IllegalArgumentException(String.format(missingKeyErrorMessage, key));
+            }
+            if (onSubstitution != null) {
+                onSubstitution.accept(key, value);
+            }
+            return value;
+        });
     }
 
     private static InputStream getResourceStream(String path) {

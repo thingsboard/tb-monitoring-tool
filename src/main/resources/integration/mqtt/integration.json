@@ -12,24 +12,24 @@
   "routingKey": null,
   "configuration": {
     "clientConfiguration": {
-      "host": "%1$s",
-      "port": %2$s,
+      "host": "${MONITORING:HOST}",
+      "port": ${MONITORING:PORT},
       "cleanSession": true,
       "retainedMessage": false,
       "ssl": false,
       "connectTimeoutSec": 10,
-      "clientId": "mon-int-%4$s",
+      "clientId": "mon-int-${MONITORING:CLIENT_ID_SUFFIX}",
       "maxBytesInMessage": 32368,
       "protocolVersion": "MQTT_3_1_1",
       "credentials": {
         "type": "basic",
-        "username": "%5$s",
+        "username": "${MONITORING:USERNAME}",
         "password": ""
       }
     },
     "topicFilters": [
       {
-        "filter": "monitoring/%3$s",
+        "filter": "monitoring/${MONITORING:ROUTING_KEY}",
         "qos": 1
       }
     ],

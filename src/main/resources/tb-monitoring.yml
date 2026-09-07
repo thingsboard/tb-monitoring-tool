@@ -116,6 +116,8 @@ monitoring:
   # Integrations Framework is PE-only. Enabled by default regardless - IntegrationsMonitoringService
   # detects the target's edition at startup and skips these checks entirely against a CE target,
   # so there's nothing to turn off by hand when pointing this at CE.
+  # Note: unlike transports above, each integration type below takes a single `target:` (not a
+  # `targets:` list) - only one target per integration type is supported.
   integrations:
     http:
       # Enable HTTP integration checks

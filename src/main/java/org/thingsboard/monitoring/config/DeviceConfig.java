@@ -13,25 +13,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.thingsboard.monitoring.config.integration;
+package org.thingsboard.monitoring.config;
 
 import lombok.Data;
-import org.thingsboard.monitoring.data.notification.ShortNameProvider;
+import org.apache.commons.lang3.StringUtils;
+import org.thingsboard.server.common.data.security.DeviceCredentials;
+
+import java.util.UUID;
 
 @Data
-public class IntegrationInfo implements ShortNameProvider {
+public class DeviceConfig {
 
-    private final IntegrationType type;
-    private final String baseUrl;
+    private UUID id;
+    private String name;
+    private DeviceCredentials credentials;
 
-    @Override
-    public String getShortName() {
-        return type.getName() + " integration";
-    }
-
-    @Override
-    public String toString() {
-        return String.format("*%s integration* (%s)", type.getName(), baseUrl);
+    public void setId(String id) {
+        this.id = StringUtils.isNotEmpty(id) ? UUID.fromString(id) : null;
     }
 
 }

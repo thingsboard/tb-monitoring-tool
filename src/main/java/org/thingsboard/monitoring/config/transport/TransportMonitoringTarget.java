@@ -15,33 +15,19 @@
  */
 package org.thingsboard.monitoring.config.transport;
 
-import com.google.common.base.Strings;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 import org.apache.commons.lang3.StringUtils;
-import org.thingsboard.monitoring.config.MonitoringTarget;
-
-import java.util.UUID;
+import org.thingsboard.monitoring.config.BaseMonitoringTarget;
 
 @Data
-public class TransportMonitoringTarget implements MonitoringTarget {
+@EqualsAndHashCode(callSuper = true)
+public class TransportMonitoringTarget extends BaseMonitoringTarget {
 
-    private String baseUrl;
-    private DeviceConfig device; // set manually during initialization
     private String queue;
-    private boolean checkDomainIps;
-    private String namePrefix;
-
-    @Override
-    public UUID getDeviceId() {
-        return device.getId();
-    }
 
     public String getQueue() {
         return StringUtils.defaultIfEmpty(queue, "Main");
-    }
-
-    public String getNamePrefix() {
-        return Strings.nullToEmpty(namePrefix);
     }
 
 }

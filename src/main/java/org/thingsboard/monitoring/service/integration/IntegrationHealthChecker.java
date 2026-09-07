@@ -57,6 +57,8 @@ public abstract class IntegrationHealthChecker<C extends IntegrationMonitoringCo
 
     protected abstract IntegrationType getIntegrationType();
 
+    // The integration device comes from integration/device.json and has no calculated field
+    // provisioned for it, unlike transport devices.
     @Override
     protected final boolean isCfMonitoringEnabled() {
         return false;

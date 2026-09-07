@@ -17,7 +17,6 @@ package org.thingsboard.monitoring.service.integration;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.thingsboard.monitoring.config.integration.IntegrationMonitoringConfig;
 import org.thingsboard.monitoring.config.integration.IntegrationMonitoringTarget;
@@ -30,8 +29,7 @@ import org.thingsboard.monitoring.service.MonitoringEntityService;
 @Slf4j
 public final class IntegrationsMonitoringService extends BaseMonitoringService<IntegrationMonitoringConfig, IntegrationMonitoringTarget> {
 
-    @Autowired
-    private MonitoringEntityService entityService;
+    private final MonitoringEntityService entityService;
 
     // monitoring.integrations.*.enabled defaults to true - the Integrations Framework is PE-only,
     // so whether these checks actually run is decided here, from the edition detected at startup,

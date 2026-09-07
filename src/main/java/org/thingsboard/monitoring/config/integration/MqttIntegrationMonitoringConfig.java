@@ -15,17 +15,22 @@
  */
 package org.thingsboard.monitoring.config.integration;
 
-import lombok.Getter;
-import lombok.Setter;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+import org.apache.commons.lang3.RandomStringUtils;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
+import java.net.URI;
+import java.util.Map;
+import java.util.Objects;
+
 @Component
 @ConditionalOnProperty(name = "monitoring.integrations.mqtt.enabled", havingValue = "true")
 @ConfigurationProperties(prefix = "monitoring.integrations.mqtt")
-@Getter
-@Setter
+@Data
+@EqualsAndHashCode(callSuper = true)
 public class MqttIntegrationMonitoringConfig extends IntegrationMonitoringConfig {
 
     // Credentials for the *integration's own outbound* connection to the broker at target.baseUrl -
@@ -35,6 +40,26 @@ public class MqttIntegrationMonitoringConfig extends IntegrationMonitoringConfig
     @Override
     public IntegrationType getIntegrationType() {
         return IntegrationType.MQTT;
+    }
+
+    @Override
+    public Map<String, String> buildTemplateParams(IntegrationMonitoringTarget target, String routingKey) {
+        URI uri = URI.create(target.getBaseUrl());
+        if (uri.getHost() == null) {
+            throw new IllegalArgumentException("Invalid MQTT base_url '" + target.getBaseUrl() +
+                    "' - expected a scheme, e.g. tcp://" + target.getBaseUrl());
+        }
+        int port = uri.getPort();
+        if (port == -1) {
+            port = "ssl".equalsIgnoreCase(uri.getScheme()) ? 8883 : 1883;
+        }
+        return Map.of(
+                "HOST", uri.getHost(),
+                "PORT", String.valueOf(port),
+                "ROUTING_KEY", routingKey,
+                "CLIENT_ID_SUFFIX", RandomStringUtils.secure().nextNumeric(6),
+                "USERNAME", Objects.requireNonNullElse(username, "")
+        );
     }
 
 }

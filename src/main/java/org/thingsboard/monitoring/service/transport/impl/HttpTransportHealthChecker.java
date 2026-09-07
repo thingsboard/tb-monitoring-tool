@@ -17,7 +17,6 @@ package org.thingsboard.monitoring.service.transport.impl;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
-import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
@@ -25,8 +24,7 @@ import org.thingsboard.monitoring.config.transport.HttpTransportMonitoringConfig
 import org.thingsboard.monitoring.config.transport.TransportMonitoringTarget;
 import org.thingsboard.monitoring.config.transport.TransportType;
 import org.thingsboard.monitoring.service.transport.TransportHealthChecker;
-
-import java.time.Duration;
+import org.thingsboard.monitoring.util.RestTemplateUtils;
 
 @Component
 @Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
@@ -42,10 +40,7 @@ public class HttpTransportHealthChecker extends TransportHealthChecker<HttpTrans
     @Override
     protected void initClient() throws Exception {
         if (restTemplate == null) {
-            restTemplate = new RestTemplateBuilder()
-                    .connectTimeout(Duration.ofMillis(config.getRequestTimeoutMs()))
-                    .readTimeout(Duration.ofMillis(config.getRequestTimeoutMs()))
-                    .build();
+            restTemplate = RestTemplateUtils.build(config.getRequestTimeoutMs());
             log.debug("Initialized HTTP client");
         }
     }

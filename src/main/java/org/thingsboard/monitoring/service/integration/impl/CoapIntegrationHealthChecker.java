@@ -23,7 +23,7 @@ import org.eclipse.californium.core.coap.MediaTypeRegistry;
 import org.eclipse.californium.elements.config.SystemConfig;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.context.annotation.Scope;
-import org.springframework.stereotype.Service;
+import org.springframework.stereotype.Component;
 import org.thingsboard.monitoring.config.integration.CoapIntegrationMonitoringConfig;
 import org.thingsboard.monitoring.config.integration.IntegrationMonitoringTarget;
 import org.thingsboard.monitoring.config.integration.IntegrationType;
@@ -31,7 +31,7 @@ import org.thingsboard.monitoring.service.integration.IntegrationHealthChecker;
 
 import java.io.IOException;
 
-@Service
+@Component
 @Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
 @Slf4j
 public class CoapIntegrationHealthChecker extends IntegrationHealthChecker<CoapIntegrationMonitoringConfig> {

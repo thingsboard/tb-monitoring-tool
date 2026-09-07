@@ -1,7 +1,10 @@
 {
   "type": "UPLINK",
-  "debugFailures": true,
-  "debugAll": false,
+  "debugMode": false,
+  "debugSettings": {
+    "failuresEnabled": true,
+    "allEnabled": false
+  },
   "configuration": {
     "scriptLang": "TBEL",
     "tbelDecoder": "var data = decodeToJson(payload);\n\nreturn {\n   deviceName: data.device,\n   telemetry: data.telemetry\n};",

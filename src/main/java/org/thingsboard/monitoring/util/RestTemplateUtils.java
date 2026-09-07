@@ -13,25 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.thingsboard.monitoring.config.integration;
+package org.thingsboard.monitoring.util;
 
-import lombok.Data;
-import org.thingsboard.monitoring.data.notification.ShortNameProvider;
+import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.web.client.RestTemplate;
 
-@Data
-public class IntegrationInfo implements ShortNameProvider {
+import java.time.Duration;
 
-    private final IntegrationType type;
-    private final String baseUrl;
+public class RestTemplateUtils {
 
-    @Override
-    public String getShortName() {
-        return type.getName() + " integration";
-    }
-
-    @Override
-    public String toString() {
-        return String.format("*%s integration* (%s)", type.getName(), baseUrl);
+    public static RestTemplate build(int requestTimeoutMs) {
+        return new RestTemplateBuilder()
+                .connectTimeout(Duration.ofMillis(requestTimeoutMs))
+                .readTimeout(Duration.ofMillis(requestTimeoutMs))
+                .build();
     }
 
 }

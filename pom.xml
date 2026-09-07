@@ -31,6 +31,12 @@
         <maven.compiler.release>25</maven.compiler.release>
         <pkg.mainClass>org.thingsboard.monitoring.ThingsboardMonitoringApplication</pkg.mainClass>
 
+        <!-- Pinned to a release published on repo.thingsboard.io (not a SNAPSHOT) - the monorepo's
+             dev-branch SNAPSHOT of these three modules is never published anywhere public, so this
+             standalone repo tracks the most recent release instead. The "PE" suffix is required, not
+             cosmetic: this build depends on PE-only data classes (Integration, Converter, EntityGroup)
+             for the Integrations Framework monitoring below - the plain (CE) artifact doesn't have them.
+             Bump when a newer PE release lands. -->
         <tb.version>4.3.1.4PE</tb.version>
 
         <spring-boot.version>3.5.15</spring-boot.version>
