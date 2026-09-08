@@ -38,6 +38,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
@@ -196,22 +197,54 @@ public class ProbeMetricsRegistryConfigTest {
     }
 
     @Test
-    public void otlpAlertingEnabled_pushSucceeds_reportsServiceIsOk() throws Exception {
+    public void otlpAlertingEnabled_firstPushSucceeds_neverReportsServiceIsOk() throws Exception {
+        // nothing had failed yet, so reporting "OK" here would just spam a log line/notification on
+        // every single successful push (every step_ms, forever) for no reason
         fakeCollector = HttpServer.create(new InetSocketAddress(0), 0);
         fakeCollector.createContext("/v1/metrics", exchange -> {
             exchange.sendResponseHeaders(200, -1);
             exchange.close();
         });
         fakeCollector.start();
-        int fakeCollectorPort = fakeCollector.getAddress().getPort();
 
         boolean otlpAlertingEnabled = true;
         boolean prometheusEnabled = false;
-        registry = probeMeterRegistry(true, "http://localhost:" + fakeCollectorPort + "/v1/metrics", 60000, otlpAlertingEnabled,
+        registry = probeMeterRegistry(true, "http://localhost:" + fakeCollector.getAddress().getPort() + "/v1/metrics", 60000, otlpAlertingEnabled,
                 prometheusEnabled, 0, "0.0.0.0");
         registry.counter("test_counter").increment(); // publish() has nothing to send otherwise
 
         ReflectionTestUtils.invokeMethod(otlpRegistryOf(registry), "publish");
+
+        verify(reporter, never()).serviceIsOk(any());
+    }
+
+    @Test
+    public void otlpAlertingEnabled_pushSucceedsAfterAFailure_reportsServiceIsOk() throws IOException {
+        // same sender instance throughout: first nothing is listening on the port (fails), then a
+        // fake collector is started on that exact port (succeeds) - unlike the first-push test above,
+        // this failure must flip serviceIsOk back on for the very next successful push
+        int port;
+        try (var probe = new java.net.ServerSocket(0)) {
+            port = probe.getLocalPort();
+        }
+        boolean otlpAlertingEnabled = true;
+        boolean prometheusEnabled = false;
+        registry = probeMeterRegistry(true, "http://localhost:" + port + "/v1/metrics", 60000, otlpAlertingEnabled,
+                prometheusEnabled, 0, "0.0.0.0");
+        Object otlpRegistry = otlpRegistryOf(registry);
+
+        registry.counter("test_counter").increment();
+        ReflectionTestUtils.invokeMethod(otlpRegistry, "publish"); // nothing listening on `port` yet - fails
+        verify(reporter).serviceFailure(eq(MonitoredServiceKey.OTLP_EXPORT), any());
+
+        fakeCollector = HttpServer.create(new InetSocketAddress(port), 0);
+        fakeCollector.createContext("/v1/metrics", exchange -> {
+            exchange.sendResponseHeaders(200, -1);
+            exchange.close();
+        });
+        fakeCollector.start();
+        registry.counter("test_counter").increment();
+        ReflectionTestUtils.invokeMethod(otlpRegistry, "publish"); // now succeeds
 
         verify(reporter).serviceIsOk(MonitoredServiceKey.OTLP_EXPORT);
     }

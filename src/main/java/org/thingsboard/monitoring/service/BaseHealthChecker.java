@@ -99,7 +99,7 @@ public abstract class BaseHealthChecker<C extends MonitoringConfig, T extends Mo
                 sendTestPayload(testPayload);
                 long requestLatencyNanos = stopWatch.getTime();
                 reporter.reportLatency(Latencies.request(getKey()), requestLatencyNanos);
-                probeMetricsRecorder.recordActionDuration(info, ProbeMetricsRecorder.ACTION_REQUEST, requestLatencyNanos / 1_000_000);
+                probeMetricsRecorder.recordActionDuration(info, ProbeMetricsRecorder.ACTION_REQUEST, requestLatencyNanos);
                 log.trace("[{}] Sent test payload ({})", info, testPayload);
             } catch (Throwable e) {
                 clearOwnActionDurations();
@@ -110,6 +110,12 @@ public abstract class BaseHealthChecker<C extends MonitoringConfig, T extends Mo
             checkWsUpdates(wsClient, testValue);
 
             reporter.serviceIsOk(info);
+            // a successful end-to-end check implies the transport accepted messages fine too - clear
+            // any "(accepted)" failure state left over from an earlier login/WS outage, or it would
+            // never recover on its own (checkAccepted() only runs again during the next outage) and
+            // its incident would stay open forever. Mirrors clearAcceptedMetricsFor() on the
+            // metrics side.
+            reporter.serviceIsOk(acceptedProbeKey());
             success = true;
         } catch (ServiceFailureException e) {
             reporter.serviceFailure(e.getServiceKey(), e);
@@ -122,6 +128,10 @@ public abstract class BaseHealthChecker<C extends MonitoringConfig, T extends Mo
         associates.values().forEach(healthChecker -> {
             healthChecker.check(wsClient);
         });
+    }
+
+    private Object acceptedProbeKey() {
+        return new AcceptedProbeKey(info);
     }
 
     private void clearOwnActionDurations() {
@@ -148,7 +158,7 @@ public abstract class BaseHealthChecker<C extends MonitoringConfig, T extends Mo
     // a no-op. Reports under AcceptedProbeKey rather than info, so this weaker signal can alert and
     // recover on its own without ever resolving (or reopening) the real end-to-end check's incident.
     protected void checkAccepted() {
-        Object acceptedKey = new AcceptedProbeKey(info);
+        Object acceptedKey = acceptedProbeKey();
         boolean success;
         try {
             initClient();
@@ -189,7 +199,7 @@ public abstract class BaseHealthChecker<C extends MonitoringConfig, T extends Mo
             }
             long wsUpdateLatencyNanos = stopWatch.getTime();
             reporter.reportLatency(Latencies.wsUpdate(getKey()), wsUpdateLatencyNanos);
-            probeMetricsRecorder.recordActionDuration(info, ProbeMetricsRecorder.ACTION_WS_UPDATE, wsUpdateLatencyNanos / 1_000_000);
+            probeMetricsRecorder.recordActionDuration(info, ProbeMetricsRecorder.ACTION_WS_UPDATE, wsUpdateLatencyNanos);
         } catch (Throwable e) {
             probeMetricsRecorder.removeActionDuration(info, ProbeMetricsRecorder.ACTION_WS_UPDATE);
             throw e;

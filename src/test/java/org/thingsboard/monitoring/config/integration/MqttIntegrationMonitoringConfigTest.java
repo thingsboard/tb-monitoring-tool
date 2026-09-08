@@ -66,6 +66,26 @@ class MqttIntegrationMonitoringConfigTest {
     }
 
     @Test
+    void setsSslParamTrueForSslScheme() {
+        IntegrationMonitoringTarget target = new IntegrationMonitoringTarget();
+        target.setBaseUrl("ssl://broker.example.com:8883");
+
+        Map<String, String> params = new MqttIntegrationMonitoringConfig().buildTemplateParams(target, "routing-key");
+
+        assertThat(params.get("SSL")).isEqualTo("true");
+    }
+
+    @Test
+    void setsSslParamFalseForPlaintextScheme() {
+        IntegrationMonitoringTarget target = new IntegrationMonitoringTarget();
+        target.setBaseUrl("tcp://broker.example.com:1883");
+
+        Map<String, String> params = new MqttIntegrationMonitoringConfig().buildTemplateParams(target, "routing-key");
+
+        assertThat(params.get("SSL")).isEqualTo("false");
+    }
+
+    @Test
     void substitutesUsernameAndRoutingKeyAndGeneratesClientIdSuffix() {
         MqttIntegrationMonitoringConfig config = new MqttIntegrationMonitoringConfig();
         config.setUsername("monitor");

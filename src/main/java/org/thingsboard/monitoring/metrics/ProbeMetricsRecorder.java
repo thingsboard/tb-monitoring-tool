@@ -24,7 +24,6 @@ import org.springframework.stereotype.Component;
 import org.thingsboard.monitoring.config.integration.IntegrationInfo;
 import org.thingsboard.monitoring.config.integration.IntegrationType;
 import org.thingsboard.monitoring.config.transport.TransportInfo;
-import org.thingsboard.monitoring.config.transport.TransportType;
 import org.thingsboard.monitoring.data.MonitoredServiceKey;
 
 import java.util.Map;
@@ -33,6 +32,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 @Component
 @Slf4j
@@ -57,18 +57,19 @@ public class ProbeMetricsRecorder {
     private final String loginEndpoint;
     private final String wsEndpoint;
 
-    private final Map<GaugeKey, AtomicReference<Double>> gaugeValues = new ConcurrentHashMap<>();
-    // Optional-valued so an unresolvable target's negative result is cached too, not re-resolved every call
-    private final Map<TransportTagKey, Optional<Tags>> transportTagsCache = new ConcurrentHashMap<>();
-    private final Map<TransportTagKey, Optional<Tags>> acceptedTagsCache = new ConcurrentHashMap<>();
-    private final Map<IntegrationTagKey, Optional<Tags>> integrationTagsCache = new ConcurrentHashMap<>();
-    private final Map<IntegrationTagKey, Optional<Tags>> integrationAcceptedTagsCache = new ConcurrentHashMap<>();
+    private final Map<GaugeKey, RegisteredGauge> gaugeValues = new ConcurrentHashMap<>();
+    // Optional-valued so an unresolvable target's negative result is cached too, not re-resolved every
+    // call - keyed on type+baseUrl (not the whole TransportInfo/IntegrationInfo, whose equals/hashCode
+    // reach mutable state), shared by both transport and integration probes since resolution for
+    // either only ever needs the labels resolver + the warned-once set below. Caches the resolved
+    // ProbeLabels rather than a final Tags, since resolution is identical for a target's "probe" and
+    // "accepted" kind - only the "kind" tag value differs, applied when building Tags from the cache hit.
+    private final Map<ProbeKey, Optional<ProbeLabelResolver.ProbeLabels>> labelsCache = new ConcurrentHashMap<>();
     // detects two probes resolving to identical labels, so it's logged instead of silently overwritten
     private final Map<Tags, Object> tagsOwners = new ConcurrentHashMap<>();
     private final Set<Tags> warnedCollisions = ConcurrentHashMap.newKeySet();
     // dedupes the "can't resolve endpoint" warning so a misconfigured target logs it once, not every cycle
-    private final Set<TransportTagKey> warnedUnresolvable = ConcurrentHashMap.newKeySet();
-    private final Set<IntegrationTagKey> warnedUnresolvableIntegration = ConcurrentHashMap.newKeySet();
+    private final Set<ProbeKey> warnedUnresolvable = ConcurrentHashMap.newKeySet();
     // action gauges recorded per probe, so removeProbe can clean them up without knowing them upfront
     private final Map<Tags, Set<String>> actionsByBaseTags = new ConcurrentHashMap<>();
     // tags with fresh data this cycle - protects a colliding sibling from wiping a just-recorded gauge;
@@ -103,10 +104,13 @@ public class ProbeMetricsRecorder {
         });
     }
 
-    public void recordActionDuration(Object serviceKey, String action, long durationMs) {
+    // takes nanos (like reportLatency) rather than ms, so callers measuring with TbStopWatch don't
+    // each have to repeat their own "/ 1_000_000" - this method is the one place that knows the
+    // exported gauge's unit is milliseconds
+    public void recordActionDuration(Object serviceKey, String action, long durationNanos) {
         withTags(serviceKey, "record action duration", tags -> {
             actionsByBaseTags.computeIfAbsent(tags, k -> ConcurrentHashMap.newKeySet()).add(action);
-            setGauge(PROBE_DURATION_METRIC, tags.and("action", action), (double) durationMs);
+            setGauge(PROBE_DURATION_METRIC, tags.and("action", action), durationNanos / 1_000_000d);
         });
     }
 
@@ -145,9 +149,11 @@ public class ProbeMetricsRecorder {
 
     private Tags acceptedTagsFor(Object serviceKey) {
         if (serviceKey instanceof TransportInfo transportInfo) {
-            return acceptedTags(transportInfo);
+            return tagsFor(ProbeKey.of(transportInfo),
+                    () -> ProbeLabelResolver.resolveTransportLabels(transportInfo.getType(), transportInfo.getTarget().getBaseUrl()), KIND_ACCEPTED);
         } else if (serviceKey instanceof IntegrationInfo integrationInfo) {
-            return acceptedIntegrationTags(integrationInfo);
+            return tagsFor(ProbeKey.of(integrationInfo),
+                    () -> ProbeLabelResolver.resolveIntegrationLabels(integrationInfo.getType(), integrationInfo.getBaseUrl()), KIND_ACCEPTED);
         }
         return null;
     }
@@ -175,16 +181,7 @@ public class ProbeMetricsRecorder {
         });
         // only on permanent removal - a stale removal runs every unhealthy cycle and would defeat the cache
         if (removal == Removal.PERMANENT) {
-            // otherwise these caches leak the same way the gauges just did
-            if (serviceKey instanceof TransportInfo transportInfo) {
-                TransportTagKey key = TransportTagKey.of(transportInfo);
-                transportTagsCache.remove(key);
-                warnedUnresolvable.remove(key);
-            } else if (serviceKey instanceof IntegrationInfo integrationInfo) {
-                IntegrationTagKey key = IntegrationTagKey.of(integrationInfo);
-                integrationTagsCache.remove(key);
-                warnedUnresolvableIntegration.remove(key);
-            }
+            evictResolutionCache(serviceKey);
         }
     }
 
@@ -210,15 +207,30 @@ public class ProbeMetricsRecorder {
             // the cache. Evicted unconditionally, even when tags resolved to null above, otherwise a
             // decommissioned unresolvable target leaks its Optional.empty() entry here forever.
             if (removal == Removal.PERMANENT) {
-                if (serviceKey instanceof TransportInfo transportInfo) {
-                    acceptedTagsCache.remove(TransportTagKey.of(transportInfo));
-                } else if (serviceKey instanceof IntegrationInfo integrationInfo) {
-                    integrationAcceptedTagsCache.remove(IntegrationTagKey.of(integrationInfo));
-                }
+                evictResolutionCache(serviceKey);
             }
         } catch (Exception e) {
             log.warn("Failed to remove accepted probe metric for [{}]", serviceKey, e);
         }
+    }
+
+    // shared by removeProbe/removeAcceptedProbe's PERMANENT branch - the resolution cache and its
+    // warned-once dedup are keyed on type+baseUrl only, independent of "probe" vs "accepted" kind
+    private void evictResolutionCache(Object serviceKey) {
+        ProbeKey key = keyFor(serviceKey);
+        if (key != null) {
+            labelsCache.remove(key);
+            warnedUnresolvable.remove(key);
+        }
+    }
+
+    private static ProbeKey keyFor(Object serviceKey) {
+        if (serviceKey instanceof TransportInfo transportInfo) {
+            return ProbeKey.of(transportInfo);
+        } else if (serviceKey instanceof IntegrationInfo integrationInfo) {
+            return ProbeKey.of(integrationInfo);
+        }
+        return null;
     }
 
     // distinguishes "the prober is dead" (this goes stale) from "a target is down" (probe_success does)
@@ -263,9 +275,11 @@ public class ProbeMetricsRecorder {
 
     private Tags resolveTags(Object serviceKey) {
         if (serviceKey instanceof TransportInfo transportInfo) {
-            return transportTags(transportInfo);
+            return tagsFor(ProbeKey.of(transportInfo),
+                    () -> ProbeLabelResolver.resolveTransportLabels(transportInfo.getType(), transportInfo.getTarget().getBaseUrl()), KIND_PROBE);
         } else if (serviceKey instanceof IntegrationInfo integrationInfo) {
-            return integrationTags(integrationInfo);
+            return tagsFor(ProbeKey.of(integrationInfo),
+                    () -> ProbeLabelResolver.resolveIntegrationLabels(integrationInfo.getType(), integrationInfo.getBaseUrl()), KIND_PROBE);
         } else if (loginEndpoint != null && MonitoredServiceKey.LOGIN.equals(serviceKey)) {
             return baseTags("login", loginEndpoint, KIND_PROBE);
         } else if (wsEndpoint != null && MonitoredServiceKey.WS.equals(serviceKey)) {
@@ -274,48 +288,18 @@ public class ProbeMetricsRecorder {
         return null;
     }
 
-    private Tags transportTags(TransportInfo info) {
-        return cachedTags(transportTagsCache, info, KIND_PROBE);
-    }
-
-    private Tags acceptedTags(TransportInfo info) {
-        return cachedTags(acceptedTagsCache, info, KIND_ACCEPTED);
-    }
-
-    // keyed on type+baseUrl, not the whole TransportInfo (its equals/hashCode reach mutable state)
-    private Tags cachedTags(Map<TransportTagKey, Optional<Tags>> cache, TransportInfo info, String kind) {
-        return cache.computeIfAbsent(TransportTagKey.of(info), key -> {
-            ProbeLabelResolver.ProbeLabels labels = ProbeLabelResolver.resolveTransportLabels(key.type(), key.baseUrl());
-            if (labels == null) {
-                if (warnedUnresolvable.add(key)) {
-                    log.warn("Failed to resolve host:port from transport base URL \"{}\" (missing scheme?) - its probe metrics will not be recorded", key.baseUrl());
-                }
-                return Optional.empty();
+    // shared by transport and integration probes - resolution (and its negative-cache/warn-once
+    // dedup) only depends on type+baseUrl; "kind" only affects which Tags come back from a cache hit
+    private Tags tagsFor(ProbeKey key, Supplier<ProbeLabelResolver.ProbeLabels> resolver, String kind) {
+        Optional<ProbeLabelResolver.ProbeLabels> labels = labelsCache.computeIfAbsent(key, k -> {
+            ProbeLabelResolver.ProbeLabels resolved = resolver.get();
+            if (resolved == null && warnedUnresolvable.add(k)) {
+                log.warn("Failed to resolve host:port from {} base URL \"{}\" (missing scheme?) - its probe metrics will not be recorded",
+                        k.type() instanceof IntegrationType ? "integration" : "transport", k.baseUrl());
             }
-            return Optional.of(baseTags(labels.check(), labels.endpoint(), kind));
-        }).orElse(null);
-    }
-
-    private Tags integrationTags(IntegrationInfo info) {
-        return cachedIntegrationTags(integrationTagsCache, info, KIND_PROBE);
-    }
-
-    private Tags acceptedIntegrationTags(IntegrationInfo info) {
-        return cachedIntegrationTags(integrationAcceptedTagsCache, info, KIND_ACCEPTED);
-    }
-
-    // mirrors cachedTags(TransportInfo) above - see there for why this is keyed on type+baseUrl
-    private Tags cachedIntegrationTags(Map<IntegrationTagKey, Optional<Tags>> cache, IntegrationInfo info, String kind) {
-        return cache.computeIfAbsent(IntegrationTagKey.of(info), key -> {
-            ProbeLabelResolver.ProbeLabels labels = ProbeLabelResolver.resolveIntegrationLabels(key.type(), key.baseUrl());
-            if (labels == null) {
-                if (warnedUnresolvableIntegration.add(key)) {
-                    log.warn("Failed to resolve host:port from integration base URL \"{}\" (missing scheme?) - its probe metrics will not be recorded", key.baseUrl());
-                }
-                return Optional.empty();
-            }
-            return Optional.of(baseTags(labels.check(), labels.endpoint(), kind));
-        }).orElse(null);
+            return Optional.ofNullable(resolved);
+        });
+        return labels.map(l -> baseTags(l.check(), l.endpoint(), kind)).orElse(null);
     }
 
     private Tags baseTags(String check, String endpoint, String kind) {
@@ -325,32 +309,34 @@ public class ProbeMetricsRecorder {
     private void setGauge(String metricName, Tags tags, double value) {
         gaugeValues.computeIfAbsent(new GaugeKey(metricName, tags), k -> {
             AtomicReference<Double> ref = new AtomicReference<>(value);
-            Gauge.builder(metricName, ref, r -> r.get())
+            Gauge gauge = Gauge.builder(metricName, ref, r -> r.get())
                     .tags(tags)
                     .register(meterRegistry);
-            return ref;
-        }).set(value);
+            return new RegisteredGauge(gauge, ref);
+        }).value().set(value);
     }
 
     private void removeGauge(String metricName, Tags tags) {
-        // skip find()'s full-registry scan when gaugeValues shows there's nothing to remove
-        if (gaugeValues.remove(new GaugeKey(metricName, tags)) != null) {
-            meterRegistry.find(metricName).tags(tags).meters().forEach(meterRegistry::remove);
+        // direct removal by the Gauge reference captured at registration time - no full-registry scan
+        RegisteredGauge registered = gaugeValues.remove(new GaugeKey(metricName, tags));
+        if (registered != null) {
+            meterRegistry.remove(registered.gauge());
         }
     }
 
     private record GaugeKey(String metricName, Tags tags) {
     }
 
-    private record TransportTagKey(TransportType type, String baseUrl) {
-        static TransportTagKey of(TransportInfo info) {
-            return new TransportTagKey(info.getType(), info.getTarget().getBaseUrl());
-        }
+    private record RegisteredGauge(Gauge gauge, AtomicReference<Double> value) {
     }
 
-    private record IntegrationTagKey(IntegrationType type, String baseUrl) {
-        static IntegrationTagKey of(IntegrationInfo info) {
-            return new IntegrationTagKey(info.getType(), info.getBaseUrl());
+    private record ProbeKey(Enum<?> type, String baseUrl) {
+        static ProbeKey of(TransportInfo info) {
+            return new ProbeKey(info.getType(), info.getTarget().getBaseUrl());
+        }
+
+        static ProbeKey of(IntegrationInfo info) {
+            return new ProbeKey(info.getType(), info.getBaseUrl());
         }
     }
 

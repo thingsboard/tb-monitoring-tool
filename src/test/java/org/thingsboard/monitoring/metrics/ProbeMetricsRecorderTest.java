@@ -28,6 +28,7 @@ import org.thingsboard.monitoring.data.MonitoredServiceKey;
 
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
@@ -104,8 +105,8 @@ public class ProbeMetricsRecorderTest {
         ProbeMetricsRecorder recorder = recorder(true);
         IntegrationInfo target = integrationInfo(IntegrationType.HTTP, "http://acme.example.com");
 
-        recorder.recordActionDuration(target, "request", 9);
-        recorder.recordActionDuration(target, "ws_update", 11);
+        recorder.recordActionDuration(target, "request", TimeUnit.MILLISECONDS.toNanos(9));
+        recorder.recordActionDuration(target, "ws_update", TimeUnit.MILLISECONDS.toNanos(11));
 
         assertThat(registry.get("probe_duration_ms")
                 .tags("check", "ihttp", "action", "request").gauge().value()).isEqualTo(9d);
@@ -140,21 +141,21 @@ public class ProbeMetricsRecorderTest {
 
     @Test
     public void schemelessIntegrationBaseUrl_staleRemoval_doesNotEvictWarnedUnresolvable() {
-        // mirrors schemelessTransportBaseUrl_staleRemoval_doesNotEvictWarnedUnresolvable, for the
-        // integration-side warnedUnresolvableIntegration/integrationTagsCache added by this change
+        // mirrors schemelessTransportBaseUrl_staleRemoval_doesNotEvictWarnedUnresolvable - integration
+        // and transport probes share the same warnedUnresolvable/labelsCache, keyed on type+baseUrl
         ProbeMetricsRecorder recorder = recorder(true);
         IntegrationInfo target = integrationInfo(IntegrationType.HTTP, "acme.example.com");
-        Set<?> warnedUnresolvableIntegration = (Set<?>) ReflectionTestUtils.getField(recorder, "warnedUnresolvableIntegration");
+        Set<?> warnedUnresolvable = (Set<?>) ReflectionTestUtils.getField(recorder, "warnedUnresolvable");
 
         recorder.recordProbe(target, true);
-        assertThat(warnedUnresolvableIntegration).hasSize(1);
+        assertThat(warnedUnresolvable).hasSize(1);
 
         recorder.startCycle();
         recorder.removeProbe(target, ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE);
-        assertThat(warnedUnresolvableIntegration).hasSize(1); // stale removal must leave the dedup entry alone
+        assertThat(warnedUnresolvable).hasSize(1); // stale removal must leave the dedup entry alone
 
         recorder.removeProbe(target, ProbeMetricsRecorder.Removal.PERMANENT);
-        assertThat(warnedUnresolvableIntegration).isEmpty(); // permanent removal does evict it
+        assertThat(warnedUnresolvable).isEmpty(); // permanent removal does evict it
     }
 
     @Test
@@ -281,8 +282,8 @@ public class ProbeMetricsRecorderTest {
         ProbeMetricsRecorder recorder = recorder(true);
         TransportInfo target = transportInfo(TransportType.MQTT, "tcp://acme.example.com:1883");
 
-        recorder.recordActionDuration(target, "request", 8);
-        recorder.recordActionDuration(target, "ws_update", 700);
+        recorder.recordActionDuration(target, "request", TimeUnit.MILLISECONDS.toNanos(8));
+        recorder.recordActionDuration(target, "ws_update", TimeUnit.MILLISECONDS.toNanos(700));
 
         assertThat(registry.get("probe_duration_ms")
                 .tags("check", "mqtt", "action", "request").gauge().value()).isEqualTo(8d);
@@ -294,7 +295,7 @@ public class ProbeMetricsRecorderTest {
     @Test
     public void recordActionDuration_whenDisabled_isNoOp() {
         ProbeMetricsRecorder recorder = recorder(false);
-        recorder.recordActionDuration(MonitoredServiceKey.LOGIN, "request", 8);
+        recorder.recordActionDuration(MonitoredServiceKey.LOGIN, "request", TimeUnit.MILLISECONDS.toNanos(8));
         assertThat(registry.getMeters()).isEmpty();
     }
 
@@ -303,8 +304,8 @@ public class ProbeMetricsRecorderTest {
         ProbeMetricsRecorder recorder = recorder(true);
         TransportInfo target = transportInfo(TransportType.MQTT, "tcp://acme.example.com:1883");
         recorder.recordProbe(target, true);
-        recorder.recordActionDuration(target, "request", 8);
-        recorder.recordActionDuration(target, "ws_update", 700);
+        recorder.recordActionDuration(target, "request", TimeUnit.MILLISECONDS.toNanos(8));
+        recorder.recordActionDuration(target, "ws_update", TimeUnit.MILLISECONDS.toNanos(700));
         assertThat(registry.getMeters()).hasSize(3); // success + 2 stages
 
         recorder.startCycle(); // next cycle - this target's fresh-this-cycle protection no longer applies
@@ -326,7 +327,7 @@ public class ProbeMetricsRecorderTest {
         TransportInfo b = transportInfo(TransportType.MQTT, "tcp://acme.example.com:1883", "QueueB");
 
         recorder.recordProbe(a, true);
-        recorder.recordActionDuration(a, "request", 8);
+        recorder.recordActionDuration(a, "request", TimeUnit.MILLISECONDS.toNanos(8));
         recorder.removeActionDuration(b, "request");
 
         assertThat(registry.get("probe_duration_ms").tags("action", "request").gauge().value()).isEqualTo(8d);
@@ -337,8 +338,8 @@ public class ProbeMetricsRecorderTest {
         ProbeMetricsRecorder recorder = recorder(true);
         TransportInfo target = transportInfo(TransportType.MQTT, "tcp://acme.example.com:1883");
         recorder.recordProbe(target, true);
-        recorder.recordActionDuration(target, "request", 8);
-        recorder.recordActionDuration(target, "ws_update", 700);
+        recorder.recordActionDuration(target, "request", TimeUnit.MILLISECONDS.toNanos(8));
+        recorder.recordActionDuration(target, "ws_update", TimeUnit.MILLISECONDS.toNanos(700));
         assertThat(registry.getMeters()).hasSize(3); // success + 2 stages
 
         recorder.startCycle(); // next cycle - this target's fresh-this-cycle protection no longer applies
@@ -353,10 +354,10 @@ public class ProbeMetricsRecorderTest {
         // would make removeProbe miss this series on a later, second removal
         ProbeMetricsRecorder recorder = recorder(true);
         TransportInfo target = transportInfo(TransportType.MQTT, "tcp://acme.example.com:1883");
-        recorder.recordActionDuration(target, "request", 8);
+        recorder.recordActionDuration(target, "request", TimeUnit.MILLISECONDS.toNanos(8));
         recorder.removeProbe(target, ProbeMetricsRecorder.Removal.PERMANENT);
 
-        recorder.recordActionDuration(target, "request", 12);
+        recorder.recordActionDuration(target, "request", TimeUnit.MILLISECONDS.toNanos(12));
 
         assertThat(registry.get("probe_duration_ms")
                 .tags("check", "mqtt", "action", "request").gauge().value()).isEqualTo(12d);
@@ -685,7 +686,7 @@ public class ProbeMetricsRecorderTest {
         TransportInfo target = transportInfo(TransportType.MQTT, "acme.example.com:1883");
 
         recorder.recordProbe(target, true);
-        recorder.recordActionDuration(target, "request", 8);
+        recorder.recordActionDuration(target, "request", TimeUnit.MILLISECONDS.toNanos(8));
         recorder.recordAcceptedProbe(target, true);
         recorder.removeAcceptedProbe(target, ProbeMetricsRecorder.Removal.PERMANENT);
 
@@ -803,31 +804,31 @@ public class ProbeMetricsRecorderTest {
         // accepted-fallback's own negative-resolution cache
         ProbeMetricsRecorder recorder = recorder(true);
         TransportInfo target = transportInfo(TransportType.MQTT, "acme.example.com:1883");
-        Map<?, ?> acceptedTagsCache = (Map<?, ?>) ReflectionTestUtils.getField(recorder, "acceptedTagsCache");
+        Map<?, ?> labelsCache = (Map<?, ?>) ReflectionTestUtils.getField(recorder, "labelsCache");
 
         recorder.recordAcceptedProbe(target, true);
-        assertThat(acceptedTagsCache).hasSize(1);
+        assertThat(labelsCache).hasSize(1);
 
         recorder.startCycle();
         recorder.removeAcceptedProbe(target, ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE);
 
-        assertThat(acceptedTagsCache).hasSize(1); // stale removal must not defeat the negative cache
+        assertThat(labelsCache).hasSize(1); // stale removal must not defeat the negative cache
     }
 
     @Test
     public void removeAcceptedProbe_permanent_evictsAcceptedTagsCacheForUnresolvableTarget() {
         // a decommissioned target whose baseUrl never resolved must not leak its Optional.empty()
-        // entry in acceptedTagsCache forever - the tags==null early exit must not skip this eviction
+        // entry in labelsCache forever - the tags==null early exit must not skip this eviction
         ProbeMetricsRecorder recorder = recorder(true);
         TransportInfo target = transportInfo(TransportType.MQTT, "acme.example.com:1883");
-        Map<?, ?> acceptedTagsCache = (Map<?, ?>) ReflectionTestUtils.getField(recorder, "acceptedTagsCache");
+        Map<?, ?> labelsCache = (Map<?, ?>) ReflectionTestUtils.getField(recorder, "labelsCache");
 
         recorder.recordAcceptedProbe(target, true);
-        assertThat(acceptedTagsCache).hasSize(1);
+        assertThat(labelsCache).hasSize(1);
 
         recorder.removeAcceptedProbe(target, ProbeMetricsRecorder.Removal.PERMANENT);
 
-        assertThat(acceptedTagsCache).isEmpty();
+        assertThat(labelsCache).isEmpty();
     }
 
 }

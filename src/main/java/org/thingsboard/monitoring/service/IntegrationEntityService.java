@@ -29,7 +29,6 @@ import org.thingsboard.server.common.data.Device;
 import org.thingsboard.server.common.data.converter.Converter;
 import org.thingsboard.server.common.data.id.ConverterId;
 import org.thingsboard.server.common.data.integration.Integration;
-import org.thingsboard.server.common.data.page.PageLink;
 
 import java.util.Map;
 import java.util.UUID;
@@ -76,7 +75,7 @@ public class IntegrationEntityService {
 
     private Converter getOrCreateMonitoringConverter() {
         String converterName = "[Monitoring] Default converter";
-        return SearchUtils.findByExactName(() -> tbClient.getConverters(new PageLink(SearchUtils.DEFAULT_PAGE_SIZE, 0, converterName)), converterName, Converter::getName)
+        return SearchUtils.findByExactName(tbClient::getConverters, converterName, Converter::getName)
                 .orElseGet(() -> {
                     Converter converter = ResourceUtils.getResource("integration/converter.json", Converter.class);
                     converter.setName(converterName);
@@ -87,7 +86,7 @@ public class IntegrationEntityService {
 
     private Integration getOrCreateIntegration(IntegrationMonitoringConfig config, IntegrationMonitoringTarget target, ConverterId converterId) {
         String integrationName = integrationEntityName(config, target);
-        return SearchUtils.findByExactName(() -> tbClient.getIntegrations(new PageLink(SearchUtils.DEFAULT_PAGE_SIZE, 0, integrationName)), integrationName, Integration::getName)
+        return SearchUtils.findByExactName(tbClient::getIntegrations, integrationName, Integration::getName)
                 .orElseGet(() -> {
                     String routingKey = UUID.randomUUID().toString();
                     Map<String, String> templateParams = config.buildTemplateParams(target, routingKey);

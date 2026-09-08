@@ -16,7 +16,7 @@
       "port": ${MONITORING:PORT},
       "cleanSession": true,
       "retainedMessage": false,
-      "ssl": false,
+      "ssl": ${MONITORING:SSL},
       "connectTimeoutSec": 10,
       "clientId": "mon-int-${MONITORING:CLIENT_ID_SUFFIX}",
       "maxBytesInMessage": 32368,

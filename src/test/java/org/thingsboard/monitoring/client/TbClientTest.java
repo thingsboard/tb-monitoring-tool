@@ -18,11 +18,19 @@ package org.thingsboard.monitoring.client;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 import org.thingsboard.common.util.JacksonUtil;
+import org.thingsboard.server.common.data.id.AssetId;
+
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -71,6 +79,15 @@ class TbClientTest {
     }
 
     @Test
+    void returnsCeForAnyUnrecognizedType() {
+        // "any non-PE type" means exactly that - not just the literal "CE" value
+        when(restTemplate.getForObject(eq(SYSTEM_INFO_URL), eq(JsonNode.class)))
+                .thenReturn(JacksonUtil.toJsonNode("{\"type\": \"FOO\"}"));
+
+        assertThat(tbClient.getEdition()).contains(Edition.CE);
+    }
+
+    @Test
     void returnsEmptyWhenTypeFieldIsMissing() {
         when(restTemplate.getForObject(eq(SYSTEM_INFO_URL), eq(JsonNode.class)))
                 .thenReturn(JacksonUtil.toJsonNode("{}"));
@@ -84,6 +101,25 @@ class TbClientTest {
                 .thenThrow(new RuntimeException("boom"));
 
         assertThat(tbClient.getEdition()).isEmpty();
+    }
+
+    @Test
+    void assignAssetToPublicCustomer_swallows404() {
+        // CE always has a public customer, so a 404 here means the asset itself is gone - the call
+        // must not blow up the whole provisioning flow over it
+        when(restTemplate.postForEntity(eq("http://example.com/api/customer/public/asset/{id}"), eq(null), eq(Void.class), any(UUID.class)))
+                .thenThrow(HttpClientErrorException.create(HttpStatus.NOT_FOUND, "Not Found", null, null, null));
+
+        assertThatCode(() -> tbClient.assignAssetToPublicCustomer(new AssetId(UUID.randomUUID()))).doesNotThrowAnyException();
+    }
+
+    @Test
+    void assignAssetToPublicCustomer_rethrowsNon404Errors() {
+        when(restTemplate.postForEntity(eq("http://example.com/api/customer/public/asset/{id}"), eq(null), eq(Void.class), any(UUID.class)))
+                .thenThrow(HttpClientErrorException.create(HttpStatus.INTERNAL_SERVER_ERROR, "Boom", null, null, null));
+
+        assertThatThrownBy(() -> tbClient.assignAssetToPublicCustomer(new AssetId(UUID.randomUUID())))
+                .isInstanceOf(HttpClientErrorException.class);
     }
 
 }

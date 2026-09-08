@@ -49,13 +49,18 @@ public class MqttIntegrationMonitoringConfig extends IntegrationMonitoringConfig
             throw new IllegalArgumentException("Invalid MQTT base_url '" + target.getBaseUrl() +
                     "' - expected a scheme, e.g. tcp://" + target.getBaseUrl());
         }
+        boolean ssl = "ssl".equalsIgnoreCase(uri.getScheme());
         int port = uri.getPort();
         if (port == -1) {
-            port = "ssl".equalsIgnoreCase(uri.getScheme()) ? 8883 : 1883;
+            port = ssl ? 8883 : 1883;
         }
         return Map.of(
                 "HOST", uri.getHost(),
                 "PORT", String.valueOf(port),
+                // MqttUtils.connect() (this tool's own probe client) already switches to TLS for an
+                // ssl:// base_url via Paho's own scheme handling - the *provisioned* Integration needs
+                // telling separately, or it ends up trying plaintext against a TLS-only port.
+                "SSL", String.valueOf(ssl),
                 "ROUTING_KEY", routingKey,
                 "CLIENT_ID_SUFFIX", RandomStringUtils.secure().nextNumeric(6),
                 "USERNAME", Objects.requireNonNullElse(username, "")

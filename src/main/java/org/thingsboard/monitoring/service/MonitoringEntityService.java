@@ -85,7 +85,7 @@ public class MonitoringEntityService {
 
     private static final String DASHBOARD_TITLE = "[Monitoring] Cloud monitoring";
     private static final String DASHBOARD_RESOURCE_PATH = "dashboard_cloud_monitoring.json";
-    private static final String VERSION_ATTRIBUTE_KEY = "version";
+    private static final String VERSION_KEY = "version";
 
     private final TbClient tbClient;
     private final PublicSharingService publicSharingService;
@@ -107,7 +107,7 @@ public class MonitoringEntityService {
         Map<String, String> attributes = tbClient.getAttributeKvEntries(ruleChainId, attributeKeys).stream()
                 .collect(Collectors.toMap(KvEntry::getKey, KvEntry::getValueAsString));
 
-        int currentVersion = Integer.parseInt(attributes.getOrDefault(VERSION_ATTRIBUTE_KEY, "0"));
+        int currentVersion = Integer.parseInt(attributes.getOrDefault(VERSION_KEY, "0"));
         int newVersion = ruleChainDescriptor.get("version").asInt();
         if (currentVersion == newVersion) {
             log.debug("Not updating rule chain, version is the same ({})", currentVersion);
@@ -120,7 +120,7 @@ public class MonitoringEntityService {
             metaData.setRuleChainId(ruleChainId);
             tbClient.saveRuleChainMetaData(metaData);
             tbClient.saveEntityAttributesV2(ruleChainId, DataConstants.SERVER_SCOPE, JacksonUtil.newObjectNode()
-                    .put(VERSION_ATTRIBUTE_KEY, newVersion));
+                    .put(VERSION_KEY, newVersion));
         }
 
         Asset asset = getOrCreateMonitoringAsset();
@@ -215,7 +215,7 @@ public class MonitoringEntityService {
     private DeviceProfile getOrCreateDeviceProfile(TransportMonitoringConfig config, TransportMonitoringTarget target) {
         TransportType transportType = config.getTransportType();
         String profileName = String.format("%s %s (%s)", target.getNamePrefix(), transportType.getName(), target.getQueue()).trim();
-        DeviceProfile deviceProfile = SearchUtils.findByExactName(() -> tbClient.getDeviceProfiles(new PageLink(SearchUtils.DEFAULT_PAGE_SIZE, 0, profileName)), profileName, DeviceProfile::getName)
+        DeviceProfile deviceProfile = SearchUtils.findByExactName(tbClient::getDeviceProfiles, profileName, DeviceProfile::getName)
                 .orElse(null);
         if (deviceProfile != null) {
             return deviceProfile;
@@ -291,36 +291,36 @@ public class MonitoringEntityService {
     // update works identically on both editions and costs no extra REST call.
     Dashboard getOrCreateMonitoringDashboard() {
         ObjectNode dashboardDescriptor = (ObjectNode) ResourceUtils.getResource(DASHBOARD_RESOURCE_PATH);
-        JsonNode versionNode = dashboardDescriptor.remove(VERSION_ATTRIBUTE_KEY);
+        JsonNode versionNode = dashboardDescriptor.remove(VERSION_KEY);
         if (versionNode == null) {
-            throw new IllegalStateException(DASHBOARD_RESOURCE_PATH + " is missing a top-level \"" + VERSION_ATTRIBUTE_KEY + "\" field");
+            throw new IllegalStateException(DASHBOARD_RESOURCE_PATH + " is missing a top-level \"" + VERSION_KEY + "\" field");
         }
         int newVersion = versionNode.asInt();
-        ((ObjectNode) dashboardDescriptor.get("configuration")).put(VERSION_ATTRIBUTE_KEY, newVersion);
+        ((ObjectNode) dashboardDescriptor.get("configuration")).put(VERSION_KEY, newVersion);
 
         Dashboard existing = findDashboardByTitle(DASHBOARD_TITLE).orElse(null);
         if (existing != null) {
-            int currentVersion = existing.getConfiguration().path(VERSION_ATTRIBUTE_KEY).asInt(0);
+            int currentVersion = existing.getConfiguration().path(VERSION_KEY).asInt(0);
             if (currentVersion == newVersion) {
                 log.debug("Found Monitoring dashboard '{}' with id {}, version is the same ({})", existing.getTitle(), existing.getId(), currentVersion);
                 return existing;
             }
             log.info("Updating Monitoring dashboard '{}' from version {} to {}", existing.getTitle(), currentVersion, newVersion);
-            Dashboard updated = JacksonUtil.OBJECT_MAPPER.convertValue(dashboardDescriptor, Dashboard.class);
-            updated.setId(existing.getId());
-            updated.setTitle(DASHBOARD_TITLE);
-            return tbClient.saveDashboard(updated);
         }
 
-        Dashboard dashboardFromResource = JacksonUtil.OBJECT_MAPPER.convertValue(dashboardDescriptor, Dashboard.class);
-        dashboardFromResource.setTitle(DASHBOARD_TITLE);
-        Dashboard saved = tbClient.saveDashboard(dashboardFromResource);
+        Dashboard dashboard = JacksonUtil.OBJECT_MAPPER.convertValue(dashboardDescriptor, Dashboard.class);
+        dashboard.setTitle(DASHBOARD_TITLE);
+        if (existing != null) {
+            dashboard.setId(existing.getId());
+            return tbClient.saveDashboard(dashboard);
+        }
+        Dashboard saved = tbClient.saveDashboard(dashboard);
         log.info("Created Monitoring dashboard '{}' with id {}", saved.getTitle(), saved.getId());
         return saved;
     }
 
     private Optional<Dashboard> findDashboardByTitle(String title) {
-        return SearchUtils.findByExactName(() -> tbClient.getTenantDashboards(new PageLink(SearchUtils.DEFAULT_PAGE_SIZE, 0, title)), title, DashboardInfo::getTitle)
+        return SearchUtils.findByExactName(tbClient::getTenantDashboards, title, DashboardInfo::getTitle)
                 .flatMap(info -> tbClient.getDashboardById(info.getId()));
     }
 

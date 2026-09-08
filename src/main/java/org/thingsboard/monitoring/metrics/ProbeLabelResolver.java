@@ -46,11 +46,9 @@ public final class ProbeLabelResolver {
     // is a stateless utility, so warning-dedup across repeated calls for the same target is the
     // caller's (ProbeMetricsRecorder's) responsibility, not this class's
     public static ProbeLabels resolveTransportLabels(TransportType type, String baseUrl) {
-        URI uri;
-        try {
-            uri = URI.create(baseUrl);
-        } catch (IllegalArgumentException | NullPointerException e) {
-            return null; // malformed or null baseUrl - treated the same as unresolvable below
+        URI uri = parseUriOrNull(baseUrl);
+        if (uri == null) {
+            return null;
         }
         String checkType = resolveCheckType(type, uri);
         String endpoint = resolveEndpoint(uri, checkType);
@@ -67,10 +65,8 @@ public final class ProbeLabelResolver {
     // default *port* still has to account for the scheme, or a secure integration target with no
     // explicit port gets labelled with a plaintext port it never contacted.
     public static ProbeLabels resolveIntegrationLabels(IntegrationType type, String baseUrl) {
-        URI uri;
-        try {
-            uri = URI.create(baseUrl);
-        } catch (IllegalArgumentException | NullPointerException e) {
+        URI uri = parseUriOrNull(baseUrl);
+        if (uri == null) {
             return null;
         }
         String checkType = type.getCheckKey();
@@ -106,6 +102,15 @@ public final class ProbeLabelResolver {
         } catch (Exception e) {
             // an invalid base URL must not fail app startup - caller treats null as "skip this probe"
             warnUnresolvable(configKey, baseUrl, probeName, e);
+            return null;
+        }
+    }
+
+    // malformed or null baseUrl is treated the same as "unresolvable" by every caller here
+    private static URI parseUriOrNull(String baseUrl) {
+        try {
+            return URI.create(baseUrl);
+        } catch (IllegalArgumentException | NullPointerException e) {
             return null;
         }
     }

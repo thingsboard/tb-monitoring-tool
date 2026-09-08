@@ -19,6 +19,24 @@ Exposes results as Slack notifications, with optional incident grouping/auto-res
 
 See `src/main/resources/tb-monitoring.yml` for the full list of config keys (env var name, default, and what it does — every key is documented there).
 
+## Metrics
+
+Every check (login, WS, each transport, each PE integration check) exports the same two gauges,
+pushed via OTLP (`METRICS_OTLP_ENABLED=true`) and/or pulled from a Prometheus endpoint
+(`METRICS_PROMETHEUS_ENABLED=true`, default port 9100, see `tb-monitoring.yml` for the rest of
+the `METRICS_OTLP_*`/`METRICS_PROMETHEUS_*` knobs):
+
+- `probe_success{domain,check,endpoint,kind,label}` — 1/0. `kind="probe"` is the full end-to-end
+  check; `kind="accepted"` is the weaker transport-only fallback that runs when login/WS itself
+  is down. A transport's own check failing sets this to 0; it only goes *absent* if login/WS died
+  upstream and this check was never reached this cycle - alert on "absent OR 0", not just "0".
+- `probe_duration_ms{...,action}` — per-stage latency (`request`, `ws_update`, `connect`,
+  `subscribe`). Disappears (not stale) once its stage stops running or passing.
+
+Plus one heartbeat: `tb_monitoring_last_run_timestamp_seconds{domain,label}` - alert on
+`time() - metric > N` to catch a dead prober itself, which `probe_success` can't (it only reports
+on targets it actually got to check).
+
 ## Building
 
 Requires JDK 25.

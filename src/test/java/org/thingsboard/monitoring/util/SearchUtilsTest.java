@@ -17,9 +17,11 @@ package org.thingsboard.monitoring.util;
 
 import org.junit.jupiter.api.Test;
 import org.thingsboard.server.common.data.page.PageData;
+import org.thingsboard.server.common.data.page.PageLink;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -27,27 +29,54 @@ class SearchUtilsTest {
 
     @Test
     void findsExactMatchAmongFuzzyResults() {
-        PageData<String> page = new PageData<>(List.of("Foo", "Foobar", "Foo Bar"), 3, 1, false);
+        PageData<String> page = new PageData<>(List.of("Foo", "Foobar", "Foo Bar"), 1, 3, false);
 
-        Optional<String> result = SearchUtils.findByExactName(() -> page, "Foo", name -> name);
+        Optional<String> result = SearchUtils.findByExactName(pageLink -> page, "Foo", name -> name);
 
         assertThat(result).contains("Foo");
     }
 
     @Test
     void returnsEmptyWhenNoExactMatchOnlyFuzzyOnes() {
-        PageData<String> page = new PageData<>(List.of("Foobar", "Foo Bar"), 2, 1, false);
+        PageData<String> page = new PageData<>(List.of("Foobar", "Foo Bar"), 1, 2, false);
 
-        Optional<String> result = SearchUtils.findByExactName(() -> page, "Foo", name -> name);
+        Optional<String> result = SearchUtils.findByExactName(pageLink -> page, "Foo", name -> name);
 
         assertThat(result).isEmpty();
     }
 
     @Test
     void returnsEmptyForEmptyPage() {
-        Optional<String> result = SearchUtils.findByExactName(PageData::emptyPageData, "Foo", name -> name);
+        Optional<String> result = SearchUtils.findByExactName(pageLink -> PageData.emptyPageData(), "Foo", name -> name);
 
         assertThat(result).isEmpty();
+    }
+
+    @Test
+    void paginatesUntilExactMatchFound() {
+        // regression test: an exact match must be findable even when it's not on the first page,
+        // instead of assuming a generous page size always catches it
+        PageData<String> page1 = new PageData<>(List.of("Foobar"), 2, 2, true);
+        PageData<String> page2 = new PageData<>(List.of("Foo"), 2, 2, false);
+        AtomicInteger calls = new AtomicInteger();
+
+        Optional<String> result = SearchUtils.findByExactName(pageLink -> calls.getAndIncrement() == 0 ? page1 : page2, "Foo", name -> name);
+
+        assertThat(result).contains("Foo");
+        assertThat(calls.get()).isEqualTo(2);
+    }
+
+    @Test
+    void queriesWithTheGivenNameAsTheTextSearch() {
+        AtomicInteger calls = new AtomicInteger();
+
+        SearchUtils.findByExactName(pageLink -> {
+            calls.incrementAndGet();
+            assertThat(pageLink.getTextSearch()).isEqualTo("Foo");
+            return PageData.<String>emptyPageData();
+        }, "Foo", name -> name);
+
+        assertThat(calls.get()).isEqualTo(1);
     }
 
 }

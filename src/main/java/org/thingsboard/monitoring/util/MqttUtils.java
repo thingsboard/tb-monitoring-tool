@@ -19,9 +19,17 @@ import org.eclipse.paho.client.mqttv3.IMqttToken;
 import org.eclipse.paho.client.mqttv3.MqttAsyncClient;
 import org.eclipse.paho.client.mqttv3.MqttClient;
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
+import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 
 public class MqttUtils {
+
+    public static MqttMessage message(String payload, int qos) {
+        MqttMessage message = new MqttMessage();
+        message.setPayload(payload.getBytes());
+        message.setQos(qos);
+        return message;
+    }
 
     // Paho treats connectionTimeout=0 as "wait indefinitely", not "fail fast" - integer
     // division would truncate any sub-second request_timeout_ms to exactly that.

@@ -20,7 +20,7 @@ monitoring:
   # Opaque identifier attached as a "label" tag on probe metrics (see monitoring.metrics.otlp),
   # letting external systems group/route metrics without having to resolve it themselves
   # (e.g. by looking up which cluster/customer a probing pod's IP belongs to)
-  label: '${LABEL:}'
+  label: '${METRICS_LABEL:}'
   rest:
     # Base REST API url, https://DOMAIN by default
     base_url: '${REST_BASE_URL:https://${monitoring.domain}}'
@@ -40,6 +40,8 @@ monitoring:
   monitoring_rate_ms: '${MONITORING_RATE_MS:10000}'
   # Maximum time between request to transport and WebSocket update
   check_timeout_ms: '${CHECK_TIMEOUT_MS:5000}'
+  # Maximum time to wait for a domain-IP DNS lookup (see monitoring.transports.*.check_domain_ips)
+  dns_resolution_timeout_ms: '${DNS_RESOLUTION_TIMEOUT_MS:5000}'
 
   # Failures threshold for notifying
   failures_threshold: '${FAILURES_THRESHOLD:1}'

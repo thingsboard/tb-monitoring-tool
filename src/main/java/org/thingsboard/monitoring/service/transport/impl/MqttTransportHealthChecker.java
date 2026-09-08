@@ -17,7 +17,6 @@ package org.thingsboard.monitoring.service.transport.impl;
 
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.paho.client.mqttv3.MqttClient;
-import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
@@ -51,19 +50,13 @@ public class MqttTransportHealthChecker extends TransportHealthChecker<MqttTrans
 
     @Override
     protected void sendTestPayload(String payload) throws Exception {
-        MqttMessage message = new MqttMessage();
-        message.setPayload(payload.getBytes());
-        message.setQos(config.getQos());
-        mqttClient.publish(DEVICE_TELEMETRY_TOPIC, message);
+        mqttClient.publish(DEVICE_TELEMETRY_TOPIC, MqttUtils.message(payload, config.getQos()));
     }
 
     @Override
     protected void sendAcceptedTestPayload(String payload) throws Exception {
         // force QoS 1 - at QoS 0 publish() never confirms broker receipt, defeating this fallback's purpose
-        MqttMessage message = new MqttMessage();
-        message.setPayload(payload.getBytes());
-        message.setQos(1);
-        mqttClient.publish(DEVICE_TELEMETRY_TOPIC, message);
+        mqttClient.publish(DEVICE_TELEMETRY_TOPIC, MqttUtils.message(payload, 1));
     }
 
     @Override

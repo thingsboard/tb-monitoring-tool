@@ -139,10 +139,15 @@ class IntegrationEntityServiceTest {
 
             Integration integration = target.getIntegration();
             assertThat(integration.getConfiguration().get("clientConfiguration").get("port").asInt()).isEqualTo(1883);
+            assertThat(integration.getConfiguration().get("clientConfiguration").get("ssl").asBoolean()).isFalse();
         }
 
         @Test
         void rendersMqttIntegrationTemplateWithDefaultSslPortWhenUrlOmitsIt() {
+            // regression test: the provisioned Integration used to be hardcoded to ssl=false
+            // regardless of scheme, so an ssl:// target's Integration would try plaintext against
+            // what is usually a TLS-only port and never connect - even though this tool's own probe
+            // client (MqttUtils.connect) already switches to TLS correctly for the same URL
             IntegrationMonitoringTarget target = new IntegrationMonitoringTarget();
             target.setBaseUrl("ssl://broker.example.com");
 
@@ -150,6 +155,7 @@ class IntegrationEntityServiceTest {
 
             Integration integration = target.getIntegration();
             assertThat(integration.getConfiguration().get("clientConfiguration").get("port").asInt()).isEqualTo(8883);
+            assertThat(integration.getConfiguration().get("clientConfiguration").get("ssl").asBoolean()).isTrue();
         }
     }
 

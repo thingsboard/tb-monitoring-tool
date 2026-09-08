@@ -18,7 +18,6 @@ package org.thingsboard.monitoring.service.integration.impl;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.paho.client.mqttv3.MqttClient;
-import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
@@ -59,10 +58,18 @@ public class MqttIntegrationHealthChecker extends IntegrationHealthChecker<MqttI
 
     @Override
     protected void sendTestPayload(String payload) throws Exception {
-        MqttMessage message = new MqttMessage();
-        message.setPayload(payload.getBytes());
-        message.setQos(qos);
-        mqttClient.publish(topic, message);
+        publish(payload, qos);
+    }
+
+    @Override
+    protected void sendAcceptedTestPayload(String payload) throws Exception {
+        // force QoS 1 regardless of the saved Integration's topic filter - at QoS 0 publish() never
+        // confirms broker receipt, defeating this fallback's purpose (mirrors MqttTransportHealthChecker)
+        publish(payload, 1);
+    }
+
+    private void publish(String payload, int qos) throws Exception {
+        mqttClient.publish(topic, MqttUtils.message(payload, qos));
     }
 
     @Override

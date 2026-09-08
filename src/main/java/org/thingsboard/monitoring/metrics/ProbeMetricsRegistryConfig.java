@@ -43,6 +43,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Configuration
 @Slf4j
@@ -52,14 +53,6 @@ public class ProbeMetricsRegistryConfig {
     // effectively 1 (setExecutor(null)) before; scrape() is thread-safe so raising it is safe
     private static final int PROMETHEUS_SCRAPE_THREAD_POOL_SIZE = 4;
 
-    static {
-        // sun.net.httpserver.ServerConfig reads these once, on the JVM's first HttpServer use - must be
-        // set before that (a static initializer, not @Value, since Spring isn't up yet at that point)
-        String timeoutS = System.getenv().getOrDefault("METRICS_PROMETHEUS_HTTP_TIMEOUT_S", "30");
-        System.setProperty("sun.net.httpserver.maxReqTime", timeoutS);
-        System.setProperty("sun.net.httpserver.maxRspTime", timeoutS);
-    }
-
     private HttpServer prometheusServer;
     private ExecutorService prometheusExecutor;
 
@@ -67,7 +60,7 @@ public class ProbeMetricsRegistryConfig {
     public MeterRegistry probeMeterRegistry(
             @Value("${monitoring.metrics.otlp.enabled:false}") boolean otlpEnabled,
             @Value("${monitoring.metrics.otlp.endpoint:http://localhost:4318/v1/metrics}") String otlpEndpoint,
-            @Value("${monitoring.metrics.otlp.step_ms:60000}") long otlpStepMs,
+            @Value("${monitoring.metrics.otlp.step_ms:10000}") long otlpStepMs,
             @Value("${monitoring.metrics.otlp.alerting_enabled:false}") boolean otlpAlertingEnabled,
             @Value("${monitoring.metrics.prometheus.enabled:false}") boolean prometheusEnabled,
             @Value("${monitoring.metrics.prometheus.port:9100}") int prometheusPort,
@@ -126,11 +119,18 @@ public class ProbeMetricsRegistryConfig {
     // alerts on real OTLP push failures via Slack/incident, not as a probe metric - a broken
     // metrics pipe can't be expected to report its own breakage
     private static OtlpMetricsSender withAlerting(OtlpMetricsSender delegate, MonitoringReporter reporter) {
+        // only calls serviceIsOk() after a preceding failure - otherwise every successful push (every
+        // step_ms, forever) would log an "OTLP Export is OK" line and allocate a notification for
+        // nothing, on the OTLP publisher thread, when nothing had actually failed
+        AtomicBoolean previouslyFailed = new AtomicBoolean(false);
         return request -> {
             try {
                 delegate.send(request);
-                reporter.serviceIsOk(MonitoredServiceKey.OTLP_EXPORT);
+                if (previouslyFailed.compareAndSet(true, false)) {
+                    reporter.serviceIsOk(MonitoredServiceKey.OTLP_EXPORT);
+                }
             } catch (Exception e) {
+                previouslyFailed.set(true);
                 reporter.serviceFailure(MonitoredServiceKey.OTLP_EXPORT, e);
                 throw e; // preserve OtlpMeterRegistry's own "Failed to publish metrics" warning log
             }

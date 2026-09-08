@@ -32,9 +32,11 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -87,6 +89,27 @@ public class BaseHealthCheckerProbeMetricsTest {
 
         verify(probeMetricsRecorder).recordActionDuration(eq(INFO), eq("request"), anyLong());
         verify(probeMetricsRecorder).recordActionDuration(eq(INFO), eq("ws_update"), anyLong());
+    }
+
+    @Test
+    public void failedRegisterWaitForUpdates_recordsFailure() {
+        // the earliest possible failure point in check() - neither request nor ws_update ever started
+        doThrow(new RuntimeException("boom")).when(wsClient).registerWaitForUpdates(anyInt());
+
+        checker.check(wsClient);
+
+        verify(probeMetricsRecorder).recordProbe(eq(INFO), eq(false));
+    }
+
+    @Test
+    public void failedRegisterWaitForUpdates_removesBothStageDurations() {
+        // neither action even started this cycle, so both gauges (not just request's) must go stale
+        doThrow(new RuntimeException("boom")).when(wsClient).registerWaitForUpdates(anyInt());
+
+        checker.check(wsClient);
+
+        verify(probeMetricsRecorder).removeActionDuration(eq(INFO), eq("request"));
+        verify(probeMetricsRecorder).removeActionDuration(eq(INFO), eq("ws_update"));
     }
 
     @Test
@@ -228,6 +251,26 @@ public class BaseHealthCheckerProbeMetricsTest {
         JsonNode payload = JacksonUtil.toJsonNode(checker.lastSentPayload);
         assertThat(payload.has(BaseHealthChecker.TEST_TELEMETRY_KEY)).isTrue();
         assertThat(payload.has(BaseHealthChecker.ACCEPTED_TEST_TELEMETRY_KEY)).isFalse();
+    }
+
+    @Test
+    public void successfulCheck_alsoClearsAcceptedKeyFailureState() {
+        // regression test: checkAccepted() only ever runs again during a later outage (it's a
+        // fallback invoked from BaseMonitoringService's failure branches), so a "(accepted)"
+        // failure left over from an earlier outage would never get its own recovery notification
+        // once login/WS comes back - the incident would stay open forever. A successful end-to-end
+        // check() must clear that state itself.
+        checker.failOnSend = true;
+        checker.checkAccepted(); // records a failure under "test-transport-info (accepted)"
+        checker.failOnSend = false;
+
+        when(wsClient.waitForUpdates(100L)).thenReturn(null);
+        when(wsClient.getLatest(any())).thenAnswer(invocation ->
+                Map.of(BaseHealthChecker.TEST_TELEMETRY_KEY, StubHealthChecker.LAST_TEST_VALUE.get()));
+
+        checker.check(wsClient);
+
+        verify(reporter).serviceIsOk(argThat(key -> key.toString().equals(INFO + " (accepted)")));
     }
 
     @Test

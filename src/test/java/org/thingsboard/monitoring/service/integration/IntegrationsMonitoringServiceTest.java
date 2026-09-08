@@ -69,6 +69,19 @@ class IntegrationsMonitoringServiceTest {
     }
 
     @Test
+    void proceedsWithInitializationOnPe_missingTargetBlockProvisionsNothing() {
+        // IntegrationMonitoringConfig.getTargets() returns an empty list (not a List.of(null) NPE)
+        // when the config's `target:` block is absent - only ever exercised on the CE path above
+        // (which returns before getTargets() is reached at all) without this
+        when(entityService.isPe()).thenReturn(true);
+        setConfigs(List.of(new HttpIntegrationMonitoringConfig()));
+
+        service.init();
+
+        verifyNoInteractions(applicationContext);
+    }
+
+    @Test
     void proceedsWithInitializationOnPe() {
         when(entityService.isPe()).thenReturn(true);
         HttpIntegrationMonitoringConfig config = new HttpIntegrationMonitoringConfig();

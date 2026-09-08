@@ -17,6 +17,7 @@ package org.thingsboard.monitoring.service;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.thingsboard.monitoring.client.TbClient;
@@ -31,7 +32,10 @@ import org.thingsboard.monitoring.util.TbStopWatch;
 import org.thingsboard.server.common.data.id.DeviceId;
 import org.thingsboard.server.common.data.page.PageData;
 import org.thingsboard.server.common.data.query.EntityData;
+import org.thingsboard.server.common.data.query.EntityDataQuery;
+import org.thingsboard.server.common.data.query.EntityFilter;
 import org.thingsboard.server.common.data.query.EntityKeyType;
+import org.thingsboard.server.common.data.query.EntityListFilter;
 import org.thingsboard.server.common.data.query.TsValue;
 
 import java.util.HashMap;
@@ -80,6 +84,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
         ReflectionTestUtils.setField(service, "reporter", reporter);
         ReflectionTestUtils.setField(service, "probeMetricsRecorder", probeMetricsRecorder);
         ReflectionTestUtils.setField(service, "stopWatch", new TbStopWatch());
+        ReflectionTestUtils.setField(service, "dnsResolutionTimeoutMs", 5000L);
 
         // one stub health checker so runChecks() doesn't short-circuit on the "healthCheckers.isEmpty()" guard;
         // its own check() outcome is irrelevant to this test (it's exercised in BaseHealthCheckerProbeMetricsTest).
@@ -550,18 +555,17 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
 
     @Test
-    public void checkEdqs_paginatesAcrossMultiplePages_toFindAllDevices() throws Exception {
-        // regression test: checkEdqs() used to query only the first 100-row page and diff the
-        // result against the full device list, so a device that only showed up on page 2+ was
-        // wrongly reported "missing from EDQS" once the fleet grew past the page size.
+    public void checkEdqs_queriesExactlyTheMonitoredDevices_notEveryDeviceInTenant() throws Exception {
+        // regression test: checkEdqs() used to query an EntityTypeFilter over every device in the
+        // tenant (paginated), rather than an EntityListFilter scoped to just the devices this
+        // instance actually monitors - wasteful on a tenant not dedicated to monitoring.
         ReflectionTestUtils.setField(service, "checkEdqs", true);
-        UUID deviceOnPage1 = UUID.randomUUID();
-        UUID deviceOnPage2 = UUID.randomUUID();
-        ReflectionTestUtils.setField(service, "devices", new LinkedList<>(List.of(deviceOnPage1, deviceOnPage2)));
+        UUID device1 = UUID.randomUUID();
+        UUID device2 = UUID.randomUUID();
+        ReflectionTestUtils.setField(service, "devices", new LinkedList<>(List.of(device1, device2)));
 
-        PageData<EntityData> page1 = new PageData<>(List.of(entityDataFor(deviceOnPage1)), 2, 2, true);
-        PageData<EntityData> page2 = new PageData<>(List.of(entityDataFor(deviceOnPage2)), 2, 2, false);
-        when(tbClient.findEntityDataByQuery(any())).thenReturn(page1, page2);
+        PageData<EntityData> result = new PageData<>(List.of(entityDataFor(device1), entityDataFor(device2)), 1, 2, false);
+        when(tbClient.findEntityDataByQuery(any())).thenReturn(result);
 
         when(tbClient.logIn()).thenReturn("token");
         when(wsClientFactory.createClient("token")).thenReturn(wsClient);
@@ -569,21 +573,25 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
         service.runChecks();
 
+        ArgumentCaptor<EntityDataQuery> queryCaptor = ArgumentCaptor.forClass(EntityDataQuery.class);
+        verify(tbClient).findEntityDataByQuery(queryCaptor.capture());
+        EntityFilter filter = queryCaptor.getValue().getEntityFilter();
+        assertThat(filter).isInstanceOf(EntityListFilter.class);
+        assertThat(((EntityListFilter) filter).getEntityList())
+                .containsExactlyInAnyOrder(device1.toString(), device2.toString());
         verify(reporter, never()).serviceFailure(eq(MonitoredServiceKey.EDQS), any());
         verify(reporter).serviceIsOk(MonitoredServiceKey.EDQS);
     }
 
     @Test
-    public void checkEdqs_deviceMissingFromEveryPage_stillReportsFailure() throws Exception {
-        // the pagination fix must not turn checkEdqs() into a no-op - a genuinely missing device
-        // still has to fail the check
+    public void checkEdqs_deviceMissingFromResponse_reportsFailure() throws Exception {
         ReflectionTestUtils.setField(service, "checkEdqs", true);
         UUID presentDevice = UUID.randomUUID();
         UUID missingDevice = UUID.randomUUID();
         ReflectionTestUtils.setField(service, "devices", new LinkedList<>(List.of(presentDevice, missingDevice)));
 
-        PageData<EntityData> onlyPage = new PageData<>(List.of(entityDataFor(presentDevice)), 1, 1, false);
-        when(tbClient.findEntityDataByQuery(any())).thenReturn(onlyPage);
+        PageData<EntityData> result = new PageData<>(List.of(entityDataFor(presentDevice)), 1, 1, false);
+        when(tbClient.findEntityDataByQuery(any())).thenReturn(result);
 
         when(tbClient.logIn()).thenReturn("token");
         when(wsClientFactory.createClient("token")).thenReturn(wsClient);
@@ -615,6 +623,31 @@ public class BaseMonitoringServiceProbeMetricsTest {
         // RFC 2606 reserves the .invalid TLD for exactly this - always fails to resolve, fast
         assertThrows(RuntimeException.class, () ->
                 ReflectionTestUtils.invokeMethod(service, "getAssociatedUrls", "tcp://this-host-does-not-resolve.invalid:1883"));
+    }
+
+    @Test
+    public void resolveWithTimeout_slowResolver_timesOutInsteadOfWaitingForever() {
+        // exercises the actual timeout branch (not just "eventually fails") against a deliberately
+        // slow supplier, so this doesn't depend on a real hung DNS resolver to verify
+        long start = System.currentTimeMillis();
+
+        assertThrows(ServiceFailureException.class, () -> BaseMonitoringService.resolveWithTimeout("slow-host", 50, () -> {
+            try {
+                Thread.sleep(5000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return new java.net.InetAddress[0];
+        }));
+
+        assertThat(System.currentTimeMillis() - start).isLessThan(2000);
+    }
+
+    @Test
+    public void resolveWithTimeout_fastResolver_returnsResultUnchanged() {
+        java.net.InetAddress[] resolved = BaseMonitoringService.resolveWithTimeout("fast-host", 5000, () -> new java.net.InetAddress[0]);
+
+        assertThat(resolved).isEmpty();
     }
 
     private static class TestMonitoringService extends BaseMonitoringService<TransportMonitoringConfig, TransportMonitoringTarget> {

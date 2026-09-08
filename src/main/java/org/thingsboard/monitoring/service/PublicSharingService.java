@@ -21,7 +21,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.thingsboard.monitoring.client.Edition;
 import org.thingsboard.monitoring.client.TbClient;
-import org.thingsboard.monitoring.util.SearchUtils;
 import org.thingsboard.server.common.data.Dashboard;
 import org.thingsboard.server.common.data.DashboardInfo;
 import org.thingsboard.server.common.data.EntityType;
@@ -49,6 +48,8 @@ import java.util.Set;
 @Slf4j
 @RequiredArgsConstructor
 public class PublicSharingService {
+
+    private static final int PAGE_SIZE = 100;
 
     private final TbClient tbClient;
 
@@ -111,7 +112,7 @@ public class PublicSharingService {
     // getGroupEntity() doesn't map "not found" to an empty Optional - it throws a 400 instead, so
     // membership is checked by scanning the group's entities rather than relying on that error shape.
     private boolean isInGroup(EntityGroupId groupId, EntityId entityId) {
-        PageLink pageLink = new PageLink(SearchUtils.DEFAULT_PAGE_SIZE);
+        PageLink pageLink = new PageLink(PAGE_SIZE);
         PageData<ShortEntityView> page;
         do {
             page = tbClient.getEntities(groupId, pageLink);

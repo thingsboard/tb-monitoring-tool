@@ -90,6 +90,10 @@ public class TbClient extends RestClient {
             if (e.getStatusCode() != HttpStatus.NOT_FOUND) {
                 throw e;
             }
+            // CE always has a public customer - a 404 here means the entity itself is gone, not that
+            // the public-customer feature is missing. Silently leaving it non-public would only
+            // surface later as a missing public dashboard link, with nothing pointing back to why.
+            log.warn("Failed to assign {} to the public customer - got 404 from {}", id, path);
         }
     }
 

@@ -38,4 +38,12 @@ class MqttUtilsTest {
         assertThat(MqttUtils.connectionTimeoutSeconds(0)).isEqualTo(1);
     }
 
+    @Test
+    void messageCarriesPayloadAndQos() {
+        var message = MqttUtils.message("hello", 1);
+
+        assertThat(new String(message.getPayload())).isEqualTo("hello");
+        assertThat(message.getQos()).isEqualTo(1);
+    }
+
 }

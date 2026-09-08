@@ -212,6 +212,42 @@ class PublicSharingServiceTest {
     }
 
     @Test
+    void makeDashboardPublicOnCeAssignsToPublicCustomer() {
+        when(tbClient.getEdition()).thenReturn(Optional.of(Edition.CE));
+        Dashboard dashboard = new Dashboard(new DashboardId(UUID.randomUUID()));
+
+        service.makeDashboardPublic(dashboard);
+
+        verify(tbClient).assignDashboardToPublicCustomer(dashboard.getId());
+        verify(tbClient, never()).getEntityGroupInfoByOwnerAndNameAndType(any(), any(), any());
+    }
+
+    @Test
+    void makeDashboardPublicOnPeCreatesGroupAndAddsEntityWhenMissing() {
+        // mirrors makeAssetPublicOnPeCreatesGroupAndAddsEntityWhenMissing, exercising the DASHBOARD
+        // group type - getPublicCustomerIdPe() later depends on this same group existing
+        when(tbClient.getEdition()).thenReturn(Optional.of(Edition.PE));
+        Dashboard dashboard = new Dashboard(new DashboardId(UUID.randomUUID()));
+        User user = new User();
+        user.setOwnerId(new CustomerId(UUID.randomUUID()));
+        when(tbClient.getUser()).thenReturn(Optional.of(user));
+        when(tbClient.getEntityGroupInfoByOwnerAndNameAndType(eq(user.getOwnerId()), eq(EntityType.DASHBOARD), any()))
+                .thenReturn(Optional.empty());
+
+        EntityGroupInfo created = new EntityGroupInfo(new EntityGroupId(UUID.randomUUID()));
+        created.setAdditionalInfo(JacksonUtil.newObjectNode().put("isPublic", true));
+        when(tbClient.saveEntityGroup(any())).thenReturn(created);
+
+        PageData<ShortEntityView> emptyPage = new PageData<>(List.of(), 0, 0, false);
+        when(tbClient.getEntities(eq(created.getId()), any(PageLink.class))).thenReturn(emptyPage);
+
+        service.makeDashboardPublic(dashboard);
+
+        verify(tbClient).saveEntityGroup(any(EntityGroup.class));
+        verify(tbClient).addEntitiesToEntityGroup(created.getId(), List.of(dashboard.getId()));
+    }
+
+    @Test
     void getPublicCustomerIdOnPeReadsGroupAdditionalInfo() {
         when(tbClient.getEdition()).thenReturn(Optional.of(Edition.PE));
         User user = new User();
