@@ -33,10 +33,10 @@ public enum IntegrationType {
     private final String name;
     private final Class<? extends IntegrationHealthChecker<?>> serviceClass;
 
-    // "i" prefix (not a "Integration" suffix) keeps check/telemetry-key names short, and still avoids
-    // colliding with the transport of the same protocol (e.g. "icoap" vs "coap") - shared by
-    // IntegrationHealthChecker.getKey() and ProbeLabelResolver.resolveIntegrationLabels() so the
-    // telemetry key and the Prometheus "check" label always agree.
+    // "i" prefix avoids colliding with the transport of the same protocol (e.g. "icoap" vs "coap")
+    // in the Prometheus "check" label (see ProbeLabelResolver.resolveIntegrationLabels) - deliberately
+    // NOT used for the telemetry latency key (see IntegrationHealthChecker.getKey()), which keeps its
+    // own, older naming to preserve an existing deployment's latency history.
     public String getCheckKey() {
         return "i" + name().toLowerCase();
     }

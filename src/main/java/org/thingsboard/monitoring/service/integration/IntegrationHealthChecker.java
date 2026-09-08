@@ -55,9 +55,14 @@ public abstract class IntegrationHealthChecker<C extends IntegrationMonitoringCo
         return new IntegrationInfo(getIntegrationType(), target.getBaseUrl());
     }
 
+    // deliberately NOT getIntegrationType().getCheckKey() ("icoap" etc.) - this key feeds
+    // Latencies.request/wsUpdate() to build the ThingsBoard telemetry key an existing deployment's
+    // dashboard already plots latency history under (e.g. "coapIntegrationWsUpdateLatency", migrated
+    // from the ThingsBoard monorepo's monitoring module). getCheckKey() is only for the Prometheus
+    // "check" label, a namespace this PR introduces fresh with no such history to preserve.
     @Override
     protected final String getKey() {
-        return getIntegrationType().getCheckKey();
+        return getIntegrationType().name().toLowerCase() + "Integration";
     }
 
     protected abstract IntegrationType getIntegrationType();

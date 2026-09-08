@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "title": "Cloud - Monitoring",
   "image": null,
   "mobileHide": false,
@@ -104,7 +104,7 @@
                   "postFuncBody": null
                 },
                 {
-                  "name": "icoapWsUpdateLatency",
+                  "name": "coapIntegrationWsUpdateLatency",
                   "type": "timeseries",
                   "label": "CoAP integration - overall",
                   "color": "#e91e63",
@@ -208,7 +208,7 @@
                   "postFuncBody": null
                 },
                 {
-                  "name": "ihttpWsUpdateLatency",
+                  "name": "httpIntegrationWsUpdateLatency",
                   "type": "timeseries",
                   "label": "HTTP integration - overall",
                   "color": "#ff9800",
@@ -222,7 +222,7 @@
                   "postFuncBody": null
                 },
                 {
-                  "name": "imqttWsUpdateLatency",
+                  "name": "mqttIntegrationWsUpdateLatency",
                   "type": "timeseries",
                   "label": "MQTT integration - overall",
                   "color": "#795548",
@@ -385,7 +385,7 @@
                   "postFuncBody": null
                 },
                 {
-                  "name": "icoapRequestLatency",
+                  "name": "coapIntegrationRequestLatency",
                   "type": "timeseries",
                   "label": "CoAP integration request latency",
                   "color": "#9c27b0",
@@ -437,7 +437,7 @@
                   "postFuncBody": null
                 },
                 {
-                  "name": "ihttpRequestLatency",
+                  "name": "httpIntegrationRequestLatency",
                   "type": "timeseries",
                   "label": "HTTP integration request latency",
                   "color": "#00bcd4",
@@ -451,7 +451,7 @@
                   "postFuncBody": null
                 },
                 {
-                  "name": "imqttRequestLatency",
+                  "name": "mqttIntegrationRequestLatency",
                   "type": "timeseries",
                   "label": "MQTT integration request latency",
                   "color": "#cddc39",

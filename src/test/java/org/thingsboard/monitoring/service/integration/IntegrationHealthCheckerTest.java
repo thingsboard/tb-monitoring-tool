@@ -58,13 +58,16 @@ class IntegrationHealthCheckerTest {
 
     @Test
     void getKeyIsDistinctPerIntegrationType() {
+        // NOT getCheckKey()'s "ihttp"/"icoap"/"imqtt" - this key builds the ThingsBoard telemetry
+        // latency key, which keeps its older, separate naming so an existing deployment's dashboard
+        // history doesn't get orphaned (see IntegrationHealthChecker.getKey())
         HttpIntegrationHealthChecker http = new HttpIntegrationHealthChecker(new HttpIntegrationMonitoringConfig(), targetFor("d"));
         CoapIntegrationHealthChecker coap = new CoapIntegrationHealthChecker(new CoapIntegrationMonitoringConfig(), targetFor("d"));
         MqttIntegrationHealthChecker mqtt = new MqttIntegrationHealthChecker(new MqttIntegrationMonitoringConfig(), targetFor("d"));
 
-        assertThat(http.getKey()).isEqualTo("ihttp");
-        assertThat(coap.getKey()).isEqualTo("icoap");
-        assertThat(mqtt.getKey()).isEqualTo("imqtt");
+        assertThat(http.getKey()).isEqualTo("httpIntegration");
+        assertThat(coap.getKey()).isEqualTo("coapIntegration");
+        assertThat(mqtt.getKey()).isEqualTo("mqttIntegration");
     }
 
     @Test
