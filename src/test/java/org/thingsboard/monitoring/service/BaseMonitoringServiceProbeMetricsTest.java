@@ -50,6 +50,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
@@ -430,6 +431,57 @@ public class BaseMonitoringServiceProbeMetricsTest {
         assertDoesNotThrow(() -> service.runChecks());
 
         verify(probeMetricsRecorder, never()).removeProbe(eq(firstInfo), any());
+    }
+
+    @Test
+    public void reconciliationFailure_reportsFailureUnderDedicatedKey_notGeneralOrTargetInfo() throws Exception {
+        // regression test: a persistent DNS failure here used to be silently downgraded to a
+        // log.warn with no alert at all. It must now alert, but under its own key - not GENERAL
+        // (whose serviceIsOk() still fires at the end of this same successful cycle, which would
+        // immediately flap the failure back to "recovered") and not the target's own info (which
+        // would make a bookkeeping failure look like the probe itself failed).
+        Object firstInfo = new Object();
+        when(healthChecker.getCachedInfo()).thenReturn(firstInfo);
+        TransportMonitoringTarget target = new TransportMonitoringTarget();
+        target.setCheckDomainIps(true);
+        target.setBaseUrl("tcp://this-host-does-not-resolve.invalid:1883");
+        when(healthChecker.getTarget()).thenReturn(target);
+
+        when(tbClient.logIn()).thenReturn("token");
+        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
+        when(wsClient.waitForReply()).thenReturn(null);
+
+        service.runChecks();
+
+        verify(reporter).serviceFailure(argThat(key -> key.toString().equals(firstInfo + " (DNS)")), any());
+        verify(reporter, never()).serviceFailure(eq(MonitoredServiceKey.GENERAL), any());
+        verify(reporter, never()).serviceFailure(eq(firstInfo), any());
+    }
+
+    @Test
+    public void reconciliationSuccess_reportsServiceIsOkUnderDedicatedKey() throws Exception {
+        Object firstInfo = new Object();
+        when(healthChecker.getCachedInfo()).thenReturn(firstInfo);
+        TransportMonitoringTarget target = new TransportMonitoringTarget();
+        target.setCheckDomainIps(true);
+        target.setBaseUrl("tcp://127.0.0.1:1883"); // IP literal - deterministic, no real DNS lookup
+        when(healthChecker.getTarget()).thenReturn(target);
+
+        // pre-populate the associate the resolution will find, so reconcileAssociates() sees
+        // nothing new/retired and completes without needing to create a real health checker
+        // (createHealthChecker() isn't exercised in this fixture - see TestMonitoringService below)
+        BaseHealthChecker<TransportMonitoringConfig, TransportMonitoringTarget> existingAssociate = mock(BaseHealthChecker.class);
+        Map<String, BaseHealthChecker<TransportMonitoringConfig, TransportMonitoringTarget>> associates = new java.util.HashMap<>();
+        associates.put("tcp://127.0.0.1:1883", existingAssociate);
+        when(healthChecker.getAssociates()).thenReturn(associates);
+
+        when(tbClient.logIn()).thenReturn("token");
+        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
+        when(wsClient.waitForReply()).thenReturn(null);
+
+        service.runChecks();
+
+        verify(reporter).serviceIsOk(argThat(key -> key.toString().equals(firstInfo + " (DNS)")));
     }
 
     @Test

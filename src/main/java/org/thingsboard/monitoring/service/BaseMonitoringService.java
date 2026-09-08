@@ -30,6 +30,7 @@ import org.thingsboard.monitoring.config.MonitoringTarget;
 import org.thingsboard.monitoring.data.Latencies;
 import org.thingsboard.monitoring.data.MonitoredServiceKey;
 import org.thingsboard.monitoring.data.ServiceFailureException;
+import org.thingsboard.monitoring.data.notification.ShortNameProvider;
 import org.thingsboard.monitoring.metrics.ProbeMetricsRecorder;
 import org.thingsboard.monitoring.util.TbStopWatch;
 import org.thingsboard.server.common.data.EntityType;
@@ -234,13 +235,33 @@ public abstract class BaseMonitoringService<C extends MonitoringConfig<T>, T ext
 
         T target = healthChecker.getTarget();
         if (target.isCheckDomainIps()) {
+            // its own key, not GENERAL - GENERAL's serviceIsOk() still fires at the end of a cycle
+            // that reached this point, which would immediately flap a real, persistent DNS failure
+            // back to "recovered" even though it never actually cleared
+            Object reconciliationKey = new ReconciliationFailureKey(healthChecker.getCachedInfo());
             try {
                 reconcileAssociates(healthChecker, target);
+                reporter.serviceIsOk(reconciliationKey);
             } catch (Exception e) {
                 // check() above already recorded this cycle's data - a reconciliation failure
-                // must not look like a failure of the probe itself
+                // must not look like a failure of the probe itself, so it's reported under its
+                // own key rather than the target's info
+                reporter.serviceFailure(reconciliationKey, e);
                 log.warn("Failed to reconcile associate IPs for {}", target.getBaseUrl(), e);
             }
+        }
+    }
+
+    private record ReconciliationFailureKey(Object delegate) implements ShortNameProvider {
+        @Override
+        public String getShortName() {
+            String base = delegate instanceof ShortNameProvider provider ? provider.getShortName() : String.valueOf(delegate);
+            return base + " (DNS)";
+        }
+
+        @Override
+        public String toString() {
+            return delegate + " (DNS)";
         }
     }
 
