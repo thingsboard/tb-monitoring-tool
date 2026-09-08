@@ -21,25 +21,31 @@ import org.eclipse.paho.client.mqttv3.MqttClient;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.mockito.MockedStatic;
 import org.thingsboard.common.util.JacksonUtil;
 import org.thingsboard.monitoring.config.integration.IntegrationMonitoringTarget;
 import org.thingsboard.monitoring.config.integration.MqttIntegrationMonitoringConfig;
-import org.thingsboard.monitoring.util.MqttUtils;
 import org.thingsboard.server.common.data.integration.Integration;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.verify;
 
 // Pins down the part of MqttIntegrationHealthChecker that's specific to it (parsing topic/qos out
-// of the saved Integration's topicFilters) without making a real network connection - MqttUtils.connect
-// is stubbed statically to hand back a mock client instead.
+// of the saved Integration's topicFilters) without making a real network connection - the protected
+// connect() seam is overridden to hand back a mock client instead.
 class MqttIntegrationHealthCheckerTest {
+
+    private static MqttIntegrationHealthChecker checkerWithMockClient(MqttIntegrationMonitoringConfig config,
+                                                                       IntegrationMonitoringTarget target,
+                                                                       MqttClient mockClient) {
+        return new MqttIntegrationHealthChecker(config, target) {
+            @Override
+            protected MqttClient connect(String baseUrl, String userName, int requestTimeoutMs) {
+                return mockClient;
+            }
+        };
+    }
 
     @Test
     void parsesTopicAndQosFromSavedIntegrationAndPublishesWithThem() throws Exception {
@@ -49,13 +55,10 @@ class MqttIntegrationHealthCheckerTest {
         target.setBaseUrl("tcp://broker.example.com:1883");
         target.setIntegration(integrationWithTopicFilter("monitoring/abc-123", 1, "monitor"));
 
-        MqttIntegrationHealthChecker checker = new MqttIntegrationHealthChecker(config, target);
         MqttClient mockClient = mock(MqttClient.class);
+        MqttIntegrationHealthChecker checker = checkerWithMockClient(config, target, mockClient);
 
-        try (MockedStatic<MqttUtils> mqttUtils = mockStatic(MqttUtils.class)) {
-            mqttUtils.when(() -> MqttUtils.connect(anyString(), anyString(), anyInt())).thenReturn(mockClient);
-            checker.initClient();
-        }
+        checker.initClient();
         checker.sendTestPayload("test-payload");
 
         ArgumentCaptor<MqttMessage> messageCaptor = ArgumentCaptor.forClass(MqttMessage.class);
@@ -76,13 +79,10 @@ class MqttIntegrationHealthCheckerTest {
         target.setBaseUrl("tcp://broker.example.com:1883");
         target.setIntegration(integrationWithTopicFilter("monitoring/abc-123", 0, "monitor"));
 
-        MqttIntegrationHealthChecker checker = new MqttIntegrationHealthChecker(config, target);
         MqttClient mockClient = mock(MqttClient.class);
+        MqttIntegrationHealthChecker checker = checkerWithMockClient(config, target, mockClient);
 
-        try (MockedStatic<MqttUtils> mqttUtils = mockStatic(MqttUtils.class)) {
-            mqttUtils.when(() -> MqttUtils.connect(anyString(), anyString(), anyInt())).thenReturn(mockClient);
-            checker.initClient();
-        }
+        checker.initClient();
         checker.sendAcceptedTestPayload("accepted-payload");
 
         ArgumentCaptor<MqttMessage> messageCaptor = ArgumentCaptor.forClass(MqttMessage.class);

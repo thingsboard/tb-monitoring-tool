@@ -15,10 +15,14 @@
  */
 package org.thingsboard.monitoring.metrics;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.test.util.ReflectionTestUtils;
+import org.slf4j.LoggerFactory;
 import org.thingsboard.monitoring.config.integration.IntegrationInfo;
 import org.thingsboard.monitoring.config.integration.IntegrationType;
 import org.thingsboard.monitoring.config.transport.TransportInfo;
@@ -26,8 +30,6 @@ import org.thingsboard.monitoring.config.transport.TransportMonitoringTarget;
 import org.thingsboard.monitoring.config.transport.TransportType;
 import org.thingsboard.monitoring.data.MonitoredServiceKey;
 
-import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -40,17 +42,31 @@ import static org.mockito.Mockito.verify;
 public class ProbeMetricsRecorderTest {
 
     private SimpleMeterRegistry registry;
+    private ListAppender<ILoggingEvent> logAppender;
 
     @BeforeEach
     public void setUp() {
         registry = new SimpleMeterRegistry();
+        logAppender = new ListAppender<>();
+        logAppender.start();
+        ((Logger) LoggerFactory.getLogger(ProbeMetricsRecorder.class)).addAppender(logAppender);
+    }
+
+    @AfterEach
+    public void tearDown() {
+        ((Logger) LoggerFactory.getLogger(ProbeMetricsRecorder.class)).detachAppender(logAppender);
+    }
+
+    private static ProbeMetricsProperties metricsProperties(boolean otlpEnabled, boolean prometheusEnabled) {
+        ProbeMetricsProperties properties = new ProbeMetricsProperties();
+        properties.getOtlp().setEnabled(otlpEnabled);
+        properties.getPrometheus().setEnabled(prometheusEnabled);
+        return properties;
     }
 
     private ProbeMetricsRecorder recorder(boolean otlpEnabled) {
-        // named locals, not adjacent positional literals, so a future constructor param reorder can't
-        // silently transpose otlpEnabled/prometheusEnabled here without a compile error
         boolean prometheusEnabled = false;
-        return new ProbeMetricsRecorder(registry, otlpEnabled, prometheusEnabled, "acme.example.com",
+        return new ProbeMetricsRecorder(registry, metricsProperties(otlpEnabled, prometheusEnabled), "acme.example.com",
                 "https://acme.example.com", "wss://acme.example.com", "acme-cluster-1");
     }
 
@@ -80,24 +96,6 @@ public class ProbeMetricsRecorderTest {
         assertThat(registry.get("probe_success")
                 .tags("check", "ihttp", "endpoint", "acme.example.com:80").gauge().value()).isEqualTo(0d);
         assertThat(registry.getMeters()).hasSize(2); // distinct series, transport probe untouched by the integration one
-    }
-
-    @Test
-    public void integrationProbe_coap_mapsToIcoapCheck() {
-        ProbeMetricsRecorder recorder = recorder(true);
-        recorder.recordProbe(integrationInfo(IntegrationType.COAP, "coap://acme.example.com"), true);
-
-        assertThat(registry.get("probe_success")
-                .tags("check", "icoap", "endpoint", "acme.example.com:5683").gauge().value()).isEqualTo(1d);
-    }
-
-    @Test
-    public void integrationProbe_mqtt_mapsToImqttCheck() {
-        ProbeMetricsRecorder recorder = recorder(true);
-        recorder.recordProbe(integrationInfo(IntegrationType.MQTT, "tcp://acme.example.com:1883"), true);
-
-        assertThat(registry.get("probe_success")
-                .tags("check", "imqtt", "endpoint", "acme.example.com:1883").gauge().value()).isEqualTo(1d);
     }
 
     @Test
@@ -145,17 +143,18 @@ public class ProbeMetricsRecorderTest {
         // and transport probes share the same warnedUnresolvable/labelsCache, keyed on type+baseUrl
         ProbeMetricsRecorder recorder = recorder(true);
         IntegrationInfo target = integrationInfo(IntegrationType.HTTP, "acme.example.com");
-        Set<?> warnedUnresolvable = (Set<?>) ReflectionTestUtils.getField(recorder, "warnedUnresolvable");
 
         recorder.recordProbe(target, true);
-        assertThat(warnedUnresolvable).hasSize(1);
+        assertThat(logAppender.list).hasSize(1); // first resolution attempt warns
 
         recorder.startCycle();
         recorder.removeProbe(target, ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE);
-        assertThat(warnedUnresolvable).hasSize(1); // stale removal must leave the dedup entry alone
+        recorder.recordProbe(target, true);
+        assertThat(logAppender.list).hasSize(1); // stale removal must leave the dedup entry alone - no re-warn
 
         recorder.removeProbe(target, ProbeMetricsRecorder.Removal.PERMANENT);
-        assertThat(warnedUnresolvable).isEmpty(); // permanent removal does evict it
+        recorder.recordProbe(target, true);
+        assertThat(logAppender.list).hasSize(2); // permanent removal does evict it - warns again
     }
 
     @Test
@@ -186,50 +185,6 @@ public class ProbeMetricsRecorderTest {
         assertThat(registry.get("probe_success")
                 .tags("domain", "acme.example.com", "check", "mqtt", "endpoint", "acme.example.com:1883", "kind", "probe")
                 .gauge().value()).isEqualTo(1d);
-    }
-
-    @Test
-    public void mqttTls_mapsToMqttsProtocol() {
-        ProbeMetricsRecorder recorder = recorder(true);
-        recorder.recordProbe(transportInfo(TransportType.MQTT, "ssl://acme.example.com:8883"), true);
-
-        assertThat(registry.get("probe_success").tags("check", "mqtts").gauge().value()).isEqualTo(1d);
-    }
-
-    @Test
-    public void coapPlain_mapsToCoapProtocol_defaultPortWhenMissing() {
-        ProbeMetricsRecorder recorder = recorder(true);
-        recorder.recordProbe(transportInfo(TransportType.COAP, "coap://acme.example.com"), true);
-
-        assertThat(registry.get("probe_success")
-                .tags("check", "coap", "endpoint", "acme.example.com:5683").gauge().value()).isEqualTo(1d);
-    }
-
-    @Test
-    public void coapSecure_mapsToCoapsProtocol() {
-        ProbeMetricsRecorder recorder = recorder(true);
-        recorder.recordProbe(transportInfo(TransportType.COAP, "coaps://acme.example.com:5684"), true);
-
-        assertThat(registry.get("probe_success").tags("check", "coaps").gauge().value()).isEqualTo(1d);
-    }
-
-    @Test
-    public void http_mapsToHttpOrHttpsByScheme() {
-        ProbeMetricsRecorder recorder = recorder(true);
-        recorder.recordProbe(transportInfo(TransportType.HTTP, "http://acme.example.com"), true);
-        recorder.recordProbe(transportInfo(TransportType.HTTP, "https://acme.example.com"), true);
-
-        assertThat(registry.get("probe_success").tags("check", "http", "endpoint", "acme.example.com:80").gauge().value()).isEqualTo(1d);
-        assertThat(registry.get("probe_success").tags("check", "https", "endpoint", "acme.example.com:443").gauge().value()).isEqualTo(1d);
-    }
-
-    @Test
-    public void lwm2m_alwaysMapsToLwm2mRegardlessOfCoapScheme() {
-        ProbeMetricsRecorder recorder = recorder(true);
-        recorder.recordProbe(transportInfo(TransportType.LWM2M, "coap://acme.example.com:5685"), true);
-
-        assertThat(registry.get("probe_success")
-                .tags("check", "lwm2m", "endpoint", "acme.example.com:5685").gauge().value()).isEqualTo(1d);
     }
 
     @Test
@@ -416,15 +371,6 @@ public class ProbeMetricsRecorderTest {
     }
 
     @Test
-    public void underscoreHostname_noPort_fallsBackToDefaultPort() {
-        ProbeMetricsRecorder recorder = recorder(true);
-        recorder.recordProbe(transportInfo(TransportType.COAP, "coap://tb_coap"), true);
-
-        assertThat(registry.get("probe_success")
-                .tags("check", "coap", "endpoint", "tb_coap:5683").gauge().value()).isEqualTo(1d);
-    }
-
-    @Test
     public void removeProbe_withFreshButEqualTransportInfo_stillRemovesGauge() {
         // recordProbe/removeProbe are called with independently-constructed TransportInfo instances in
         // production (BaseHealthChecker's cached field vs. a fresh BaseHealthChecker.getInfo() call) -
@@ -506,7 +452,7 @@ public class ProbeMetricsRecorderTest {
     public void disabled_invalidWsBaseUrl_doesNotThrowAtConstruction() {
         boolean otlpEnabled = false;
         boolean prometheusEnabled = false;
-        ProbeMetricsRecorder recorder = new ProbeMetricsRecorder(registry, otlpEnabled, prometheusEnabled, "acme.example.com",
+        ProbeMetricsRecorder recorder = new ProbeMetricsRecorder(registry, metricsProperties(otlpEnabled, prometheusEnabled), "acme.example.com",
                 "https://acme.example.com", "not a valid uri", "acme-cluster-1");
         recorder.recordProbe(MonitoredServiceKey.WS, true);
         assertThat(registry.getMeters()).isEmpty();
@@ -517,7 +463,7 @@ public class ProbeMetricsRecorderTest {
         // otlpEnabled=true so this recorder is "enabled" and would normally resolve wsEndpoint eagerly
         boolean otlpEnabled = true;
         boolean prometheusEnabled = false;
-        ProbeMetricsRecorder recorder = new ProbeMetricsRecorder(registry, otlpEnabled, prometheusEnabled, "acme.example.com",
+        ProbeMetricsRecorder recorder = new ProbeMetricsRecorder(registry, metricsProperties(otlpEnabled, prometheusEnabled), "acme.example.com",
                 "https://acme.example.com", "not a valid uri", "acme-cluster-1");
 
         recorder.recordProbe(MonitoredServiceKey.WS, true);
@@ -529,7 +475,7 @@ public class ProbeMetricsRecorderTest {
     public void enabled_invalidRestBaseUrl_doesNotThrowAtConstruction_loginProbeSkipped() {
         boolean otlpEnabled = true;
         boolean prometheusEnabled = false;
-        ProbeMetricsRecorder recorder = new ProbeMetricsRecorder(registry, otlpEnabled, prometheusEnabled, "acme.example.com",
+        ProbeMetricsRecorder recorder = new ProbeMetricsRecorder(registry, metricsProperties(otlpEnabled, prometheusEnabled), "acme.example.com",
                 "not a valid uri", "wss://acme.example.com", "acme-cluster-1");
 
         recorder.recordProbe(MonitoredServiceKey.LOGIN, true);
@@ -553,7 +499,7 @@ public class ProbeMetricsRecorderTest {
         // becomes an empty string tag rather than omitting the label tag entirely
         boolean otlpEnabled = true;
         boolean prometheusEnabled = false;
-        ProbeMetricsRecorder recorder = new ProbeMetricsRecorder(registry, otlpEnabled, prometheusEnabled, "acme.example.com",
+        ProbeMetricsRecorder recorder = new ProbeMetricsRecorder(registry, metricsProperties(otlpEnabled, prometheusEnabled), "acme.example.com",
                 "https://acme.example.com", "wss://acme.example.com", "");
         recorder.recordProbe(transportInfo(TransportType.MQTT, "tcp://acme.example.com:1883"), true);
 
@@ -566,7 +512,7 @@ public class ProbeMetricsRecorderTest {
         SimpleMeterRegistry spyRegistry = spy(new SimpleMeterRegistry());
         boolean otlpEnabled = true;
         boolean prometheusEnabled = false;
-        ProbeMetricsRecorder recorder = new ProbeMetricsRecorder(spyRegistry, otlpEnabled, prometheusEnabled, "acme.example.com",
+        ProbeMetricsRecorder recorder = new ProbeMetricsRecorder(spyRegistry, metricsProperties(otlpEnabled, prometheusEnabled), "acme.example.com",
                 "https://acme.example.com", "wss://acme.example.com", "acme-cluster-1");
 
         recorder.removeAcceptedProbe(transportInfo(TransportType.MQTT, "tcp://acme.example.com:1883"), ProbeMetricsRecorder.Removal.PERMANENT);
@@ -714,25 +660,24 @@ public class ProbeMetricsRecorderTest {
         // an unresolvable target's warning would re-fire every such cycle instead of logging once
         ProbeMetricsRecorder recorder = recorder(true);
         TransportInfo target = transportInfo(TransportType.MQTT, "acme.example.com:1883");
-        Set<?> warnedUnresolvable = (Set<?>) ReflectionTestUtils.getField(recorder, "warnedUnresolvable");
 
         recorder.recordProbe(target, true);
-        assertThat(warnedUnresolvable).hasSize(1);
+        assertThat(logAppender.list).hasSize(1); // first resolution attempt warns
 
         recorder.startCycle();
         recorder.removeProbe(target, ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE);
-        assertThat(warnedUnresolvable).hasSize(1); // stale removal must leave the dedup entry alone
+        recorder.recordProbe(target, true);
+        assertThat(logAppender.list).hasSize(1); // stale removal must leave the dedup entry alone - no re-warn
 
         recorder.removeProbe(target, ProbeMetricsRecorder.Removal.PERMANENT);
-        assertThat(warnedUnresolvable).isEmpty(); // permanent removal does evict it
+        recorder.recordProbe(target, true);
+        assertThat(logAppender.list).hasSize(2); // permanent removal does evict it - warns again
     }
 
     @Test
     public void schemelessTransportBaseUrl_removedThenReAdded_warnsAgain() {
         // PERMANENT removal evicts warnedUnresolvable for the retired target, so a target decommissioned
         // and later re-added with the same bad URL gets a fresh warning instead of permanent silence.
-        // No log-capturing utility exists here, so this only confirms re-adding stays side-effect-free
-        // (the actual re-warning is covered by inspection of removeProbe's warnedUnresolvable.remove).
         ProbeMetricsRecorder recorder = recorder(true);
         TransportInfo target = transportInfo(TransportType.MQTT, "acme.example.com:1883");
 
@@ -741,6 +686,7 @@ public class ProbeMetricsRecorderTest {
         recorder.recordProbe(target, true);
 
         assertThat(registry.getMeters()).isEmpty();
+        assertThat(logAppender.list).hasSize(2); // permanent removal evicted the dedup entry - it warns again
     }
 
     @Test
@@ -751,14 +697,14 @@ public class ProbeMetricsRecorderTest {
         ProbeMetricsRecorder recorder = recorder(true);
         TransportInfo first = transportInfo(TransportType.MQTT, "tcp://acme.example.com:1883", "QueueA");
         TransportInfo second = transportInfo(TransportType.MQTT, "tcp://acme.example.com:1883", "QueueB");
-        Set<?> warnedCollisions = (Set<?>) ReflectionTestUtils.getField(recorder, "warnedCollisions");
 
         recorder.recordAcceptedProbe(first, true);
-        assertThat(warnedCollisions).isEmpty();
+        assertThat(logAppender.list).isEmpty();
 
         recorder.recordAcceptedProbe(second, false);
 
-        assertThat(warnedCollisions).hasSize(1);
+        assertThat(logAppender.list).hasSize(1);
+        assertThat(logAppender.list.get(0).getFormattedMessage()).contains("Probe metrics collision");
         assertThat(registry.get("probe_success").tags("kind", "accepted").gauge().value()).isEqualTo(0d);
         assertThat(registry.getMeters()).hasSize(1); // still one series, not two - the collision is real
     }
@@ -772,13 +718,14 @@ public class ProbeMetricsRecorderTest {
         TransportInfo second = transportInfo(TransportType.MQTT, "tcp://acme.example.com:1883", "QueueB");
         recorder.recordProbe(first, true);
         recorder.recordProbe(second, false);
-        Set<?> warnedCollisions = (Set<?>) ReflectionTestUtils.getField(recorder, "warnedCollisions");
-        assertThat(warnedCollisions).hasSize(1);
+        assertThat(logAppender.list).hasSize(1);
 
         recorder.startCycle();
         recorder.removeProbe(second, ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE);
+        recorder.recordProbe(first, true);
+        recorder.recordProbe(second, false);
 
-        assertThat(warnedCollisions).hasSize(1); // stale removal must leave the dedup entry alone
+        assertThat(logAppender.list).hasSize(1); // stale removal must leave the dedup entry alone - no re-warn
     }
 
     @Test
@@ -790,12 +737,13 @@ public class ProbeMetricsRecorderTest {
         TransportInfo second = transportInfo(TransportType.MQTT, "tcp://acme.example.com:1883", "QueueB");
         recorder.recordProbe(first, true);
         recorder.recordProbe(second, false);
-        Set<?> warnedCollisions = (Set<?>) ReflectionTestUtils.getField(recorder, "warnedCollisions");
-        assertThat(warnedCollisions).hasSize(1);
+        assertThat(logAppender.list).hasSize(1);
 
         recorder.removeProbe(second, ProbeMetricsRecorder.Removal.PERMANENT);
+        recorder.recordProbe(first, true);
+        recorder.recordProbe(second, false);
 
-        assertThat(warnedCollisions).isEmpty();
+        assertThat(logAppender.list).hasSize(2); // decommissioning clears the dedup entry - collision warns again
     }
 
     @Test
@@ -804,15 +752,15 @@ public class ProbeMetricsRecorderTest {
         // accepted-fallback's own negative-resolution cache
         ProbeMetricsRecorder recorder = recorder(true);
         TransportInfo target = transportInfo(TransportType.MQTT, "acme.example.com:1883");
-        Map<?, ?> labelsCache = (Map<?, ?>) ReflectionTestUtils.getField(recorder, "labelsCache");
 
         recorder.recordAcceptedProbe(target, true);
-        assertThat(labelsCache).hasSize(1);
+        assertThat(logAppender.list).hasSize(1);
 
         recorder.startCycle();
         recorder.removeAcceptedProbe(target, ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE);
+        recorder.recordAcceptedProbe(target, true);
 
-        assertThat(labelsCache).hasSize(1); // stale removal must not defeat the negative cache
+        assertThat(logAppender.list).hasSize(1); // stale removal must not defeat the negative cache - no re-warn
     }
 
     @Test
@@ -821,14 +769,14 @@ public class ProbeMetricsRecorderTest {
         // entry in labelsCache forever - the tags==null early exit must not skip this eviction
         ProbeMetricsRecorder recorder = recorder(true);
         TransportInfo target = transportInfo(TransportType.MQTT, "acme.example.com:1883");
-        Map<?, ?> labelsCache = (Map<?, ?>) ReflectionTestUtils.getField(recorder, "labelsCache");
 
         recorder.recordAcceptedProbe(target, true);
-        assertThat(labelsCache).hasSize(1);
+        assertThat(logAppender.list).hasSize(1);
 
         recorder.removeAcceptedProbe(target, ProbeMetricsRecorder.Removal.PERMANENT);
+        recorder.recordAcceptedProbe(target, true);
 
-        assertThat(labelsCache).isEmpty();
+        assertThat(logAppender.list).hasSize(2); // permanent removal evicts the cache - resolution (and its warning) re-runs
     }
 
 }

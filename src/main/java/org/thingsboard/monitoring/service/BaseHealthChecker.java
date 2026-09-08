@@ -82,33 +82,7 @@ public abstract class BaseHealthChecker<C extends MonitoringConfig, T extends Mo
         log.debug("[{}] Checking", info);
         boolean success = false;
         try {
-            String testValue;
-            String testPayload;
-            try {
-                int expectedUpdatesCount = isCfMonitoringEnabled() ? 2 : 1;
-                wsClient.registerWaitForUpdates(expectedUpdatesCount);
-                testValue = UUID.randomUUID().toString();
-                testPayload = createTestPayload(testValue, TEST_TELEMETRY_KEY);
-            } catch (Throwable e) {
-                clearOwnActionDurations(); // neither action recorded this cycle yet
-                throw new ServiceFailureException(info, e);
-            }
-            try {
-                initClient();
-                stopWatch.start();
-                sendTestPayload(testPayload);
-                long requestLatencyNanos = stopWatch.getTime();
-                reporter.reportLatency(Latencies.request(getKey()), requestLatencyNanos);
-                probeMetricsRecorder.recordActionDuration(info, ProbeMetricsRecorder.ACTION_REQUEST, requestLatencyNanos);
-                log.trace("[{}] Sent test payload ({})", info, testPayload);
-            } catch (Throwable e) {
-                clearOwnActionDurations();
-                throw new ServiceFailureException(info, e);
-            }
-
-            log.trace("[{}] Waiting for WS update", info);
-            checkWsUpdates(wsClient, testValue);
-
+            doCheck(wsClient);
             reporter.serviceIsOk(info);
             // a successful end-to-end check implies the transport accepted messages fine too - clear
             // any "(accepted)" failure state left over from an earlier login/WS outage, or it would
@@ -128,6 +102,39 @@ public abstract class BaseHealthChecker<C extends MonitoringConfig, T extends Mo
         associates.values().forEach(healthChecker -> {
             healthChecker.check(wsClient);
         });
+    }
+
+    // the actual probe sequence, factored out of check() so that method is just the alerting/metrics
+    // envelope (try/catch/finally + associates fan-out) around this "how a check actually runs" body.
+    // Each stage clears its own action-duration gauge on failure before rethrowing, so a partial
+    // attempt never leaves a stale duration behind for an action that didn't actually complete.
+    private void doCheck(WsClient wsClient) {
+        String testValue;
+        String testPayload;
+        try {
+            int expectedUpdatesCount = isCfMonitoringEnabled() ? 2 : 1;
+            wsClient.registerWaitForUpdates(expectedUpdatesCount);
+            testValue = UUID.randomUUID().toString();
+            testPayload = createTestPayload(testValue, TEST_TELEMETRY_KEY);
+        } catch (Throwable e) {
+            clearOwnActionDurations(); // neither action recorded this cycle yet
+            throw new ServiceFailureException(info, e);
+        }
+        try {
+            initClient();
+            stopWatch.start();
+            sendTestPayload(testPayload);
+            long requestLatencyNanos = stopWatch.getTime();
+            reporter.reportLatency(Latencies.request(getKey()), requestLatencyNanos);
+            probeMetricsRecorder.recordActionDuration(info, ProbeMetricsRecorder.ACTION_REQUEST, requestLatencyNanos);
+            log.trace("[{}] Sent test payload ({})", info, testPayload);
+        } catch (Throwable e) {
+            clearOwnActionDurations();
+            throw new ServiceFailureException(info, e);
+        }
+
+        log.trace("[{}] Waiting for WS update", info);
+        checkWsUpdates(wsClient, testValue);
     }
 
     private Object acceptedProbeKey() {

@@ -22,21 +22,21 @@ import org.thingsboard.monitoring.config.integration.IntegrationMonitoringConfig
 import org.thingsboard.monitoring.config.integration.IntegrationMonitoringTarget;
 import org.thingsboard.monitoring.service.BaseHealthChecker;
 import org.thingsboard.monitoring.service.BaseMonitoringService;
-import org.thingsboard.monitoring.service.MonitoringEntityService;
+import org.thingsboard.monitoring.service.PublicSharingService;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public final class IntegrationsMonitoringService extends BaseMonitoringService<IntegrationMonitoringConfig, IntegrationMonitoringTarget> {
 
-    private final MonitoringEntityService entityService;
+    private final PublicSharingService publicSharingService;
 
     // monitoring.integrations.*.enabled defaults to true - the Integrations Framework is PE-only,
     // so whether these checks actually run is decided here, from the edition detected at startup,
     // not left to the operator to know and set per-target.
     @Override
     public void init() {
-        if (!entityService.isPe()) {
+        if (!publicSharingService.isPe()) {
             log.info("Target is CE - integration checks don't apply, skipping");
             return;
         }

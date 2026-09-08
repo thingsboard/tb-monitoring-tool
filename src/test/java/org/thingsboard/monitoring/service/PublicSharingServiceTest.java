@@ -65,6 +65,22 @@ class PublicSharingServiceTest {
         service = new PublicSharingService(tbClient);
     }
 
+    private User givenPeUser() {
+        when(tbClient.getEdition()).thenReturn(Optional.of(Edition.PE));
+        User user = new User();
+        user.setOwnerId(new CustomerId(UUID.randomUUID()));
+        when(tbClient.getUser()).thenReturn(Optional.of(user));
+        return user;
+    }
+
+    private EntityGroupInfo givenPeWithPublicGroup(EntityType type, User user) {
+        EntityGroupInfo group = new EntityGroupInfo(new EntityGroupId(UUID.randomUUID()));
+        group.setAdditionalInfo(JacksonUtil.newObjectNode().put("isPublic", true));
+        when(tbClient.getEntityGroupInfoByOwnerAndNameAndType(eq(user.getOwnerId()), eq(type), any()))
+                .thenReturn(Optional.of(group));
+        return group;
+    }
+
     @Test
     void isPeUsesEditionFromSystemInfoWhenAvailable() {
         when(tbClient.getEdition()).thenReturn(Optional.of(Edition.PE));
@@ -119,11 +135,8 @@ class PublicSharingServiceTest {
 
     @Test
     void makeAssetPublicOnPeCreatesGroupAndAddsEntityWhenMissing() {
-        when(tbClient.getEdition()).thenReturn(Optional.of(Edition.PE));
         Asset asset = new Asset(new AssetId(UUID.randomUUID()));
-        User user = new User();
-        user.setOwnerId(new CustomerId(UUID.randomUUID()));
-        when(tbClient.getUser()).thenReturn(Optional.of(user));
+        User user = givenPeUser();
         when(tbClient.getEntityGroupInfoByOwnerAndNameAndType(eq(user.getOwnerId()), eq(EntityType.ASSET), any()))
                 .thenReturn(Optional.empty());
 
@@ -143,11 +156,8 @@ class PublicSharingServiceTest {
 
     @Test
     void makeAssetPublicOnPeMakesExistingGroupPublicAndSkipsAlreadyMember() {
-        when(tbClient.getEdition()).thenReturn(Optional.of(Edition.PE));
         Asset asset = new Asset(new AssetId(UUID.randomUUID()));
-        User user = new User();
-        user.setOwnerId(new CustomerId(UUID.randomUUID()));
-        when(tbClient.getUser()).thenReturn(Optional.of(user));
+        User user = givenPeUser();
 
         EntityGroupInfo notYetPublic = new EntityGroupInfo(new EntityGroupId(UUID.randomUUID()));
         when(tbClient.getEntityGroupInfoByOwnerAndNameAndType(eq(user.getOwnerId()), eq(EntityType.ASSET), any()))
@@ -169,16 +179,9 @@ class PublicSharingServiceTest {
 
     @Test
     void makeAssetPublicFindsExistingMemberOnSecondPage() {
-        when(tbClient.getEdition()).thenReturn(Optional.of(Edition.PE));
         Asset asset = new Asset(new AssetId(UUID.randomUUID()));
-        User user = new User();
-        user.setOwnerId(new CustomerId(UUID.randomUUID()));
-        when(tbClient.getUser()).thenReturn(Optional.of(user));
-
-        EntityGroupInfo group = new EntityGroupInfo(new EntityGroupId(UUID.randomUUID()));
-        group.setAdditionalInfo(JacksonUtil.newObjectNode().put("isPublic", true));
-        when(tbClient.getEntityGroupInfoByOwnerAndNameAndType(eq(user.getOwnerId()), eq(EntityType.ASSET), any()))
-                .thenReturn(Optional.of(group));
+        User user = givenPeUser();
+        EntityGroupInfo group = givenPeWithPublicGroup(EntityType.ASSET, user);
 
         PageData<ShortEntityView> firstPage = new PageData<>(List.of(new ShortEntityView(new AssetId(UUID.randomUUID()))), 2, 2, true);
         PageData<ShortEntityView> secondPage = new PageData<>(List.of(new ShortEntityView(asset.getId())), 2, 2, false);
@@ -191,16 +194,9 @@ class PublicSharingServiceTest {
 
     @Test
     void makeAssetPublicAddsMemberWhenNotFoundAcrossMultiplePages() {
-        when(tbClient.getEdition()).thenReturn(Optional.of(Edition.PE));
         Asset asset = new Asset(new AssetId(UUID.randomUUID()));
-        User user = new User();
-        user.setOwnerId(new CustomerId(UUID.randomUUID()));
-        when(tbClient.getUser()).thenReturn(Optional.of(user));
-
-        EntityGroupInfo group = new EntityGroupInfo(new EntityGroupId(UUID.randomUUID()));
-        group.setAdditionalInfo(JacksonUtil.newObjectNode().put("isPublic", true));
-        when(tbClient.getEntityGroupInfoByOwnerAndNameAndType(eq(user.getOwnerId()), eq(EntityType.ASSET), any()))
-                .thenReturn(Optional.of(group));
+        User user = givenPeUser();
+        EntityGroupInfo group = givenPeWithPublicGroup(EntityType.ASSET, user);
 
         PageData<ShortEntityView> firstPage = new PageData<>(List.of(new ShortEntityView(new AssetId(UUID.randomUUID()))), 2, 2, true);
         PageData<ShortEntityView> secondPage = new PageData<>(List.of(new ShortEntityView(new AssetId(UUID.randomUUID()))), 2, 2, false);
@@ -226,11 +222,8 @@ class PublicSharingServiceTest {
     void makeDashboardPublicOnPeCreatesGroupAndAddsEntityWhenMissing() {
         // mirrors makeAssetPublicOnPeCreatesGroupAndAddsEntityWhenMissing, exercising the DASHBOARD
         // group type - getPublicCustomerIdPe() later depends on this same group existing
-        when(tbClient.getEdition()).thenReturn(Optional.of(Edition.PE));
         Dashboard dashboard = new Dashboard(new DashboardId(UUID.randomUUID()));
-        User user = new User();
-        user.setOwnerId(new CustomerId(UUID.randomUUID()));
-        when(tbClient.getUser()).thenReturn(Optional.of(user));
+        User user = givenPeUser();
         when(tbClient.getEntityGroupInfoByOwnerAndNameAndType(eq(user.getOwnerId()), eq(EntityType.DASHBOARD), any()))
                 .thenReturn(Optional.empty());
 
@@ -249,16 +242,10 @@ class PublicSharingServiceTest {
 
     @Test
     void getPublicCustomerIdOnPeReadsGroupAdditionalInfo() {
-        when(tbClient.getEdition()).thenReturn(Optional.of(Edition.PE));
-        User user = new User();
-        user.setOwnerId(new CustomerId(UUID.randomUUID()));
-        when(tbClient.getUser()).thenReturn(Optional.of(user));
-
+        User user = givenPeUser();
         UUID publicCustomerId = UUID.randomUUID();
-        EntityGroupInfo group = new EntityGroupInfo(new EntityGroupId(UUID.randomUUID()));
+        EntityGroupInfo group = givenPeWithPublicGroup(EntityType.DASHBOARD, user);
         group.setAdditionalInfo(JacksonUtil.newObjectNode().put("isPublic", true).put("publicCustomerId", publicCustomerId.toString()));
-        when(tbClient.getEntityGroupInfoByOwnerAndNameAndType(eq(user.getOwnerId()), eq(EntityType.DASHBOARD), any()))
-                .thenReturn(Optional.of(group));
 
         DashboardId dashboardId = new DashboardId(UUID.randomUUID());
         assertThat(service.getPublicCustomerId(dashboardId)).isEqualTo(publicCustomerId.toString());
@@ -266,15 +253,8 @@ class PublicSharingServiceTest {
 
     @Test
     void getPublicCustomerIdOnPeReturnsNullWhenGroupHasNoPublicCustomerYet() {
-        when(tbClient.getEdition()).thenReturn(Optional.of(Edition.PE));
-        User user = new User();
-        user.setOwnerId(new CustomerId(UUID.randomUUID()));
-        when(tbClient.getUser()).thenReturn(Optional.of(user));
-
-        EntityGroupInfo group = new EntityGroupInfo(new EntityGroupId(UUID.randomUUID()));
-        group.setAdditionalInfo(JacksonUtil.newObjectNode().put("isPublic", true));
-        when(tbClient.getEntityGroupInfoByOwnerAndNameAndType(eq(user.getOwnerId()), eq(EntityType.DASHBOARD), any()))
-                .thenReturn(Optional.of(group));
+        User user = givenPeUser();
+        givenPeWithPublicGroup(EntityType.DASHBOARD, user);
 
         assertThat(service.getPublicCustomerId(new DashboardId(UUID.randomUUID()))).isNull();
     }

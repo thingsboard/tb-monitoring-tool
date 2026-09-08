@@ -132,10 +132,6 @@ public class MonitoringEntityService {
         this.dashboardId = Optional.ofNullable(dashboard).map(Dashboard::getId).orElse(null);
     }
 
-    public boolean isPe() {
-        return publicSharingService.isPe();
-    }
-
     public Asset getOrCreateMonitoringAsset() {
         String assetName = "[Monitoring] Latencies";
         return tbClient.findAsset(assetName).orElseGet(() -> {

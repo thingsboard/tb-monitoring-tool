@@ -25,7 +25,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import org.thingsboard.monitoring.config.DeviceConfig;
 import org.thingsboard.monitoring.config.integration.HttpIntegrationMonitoringConfig;
 import org.thingsboard.monitoring.config.integration.IntegrationMonitoringTarget;
-import org.thingsboard.monitoring.service.MonitoringEntityService;
+import org.thingsboard.monitoring.service.PublicSharingService;
 import org.thingsboard.monitoring.service.integration.impl.HttpIntegrationHealthChecker;
 
 import java.util.List;
@@ -46,7 +46,7 @@ import static org.mockito.Mockito.when;
 class IntegrationsMonitoringServiceTest {
 
     @Mock
-    private MonitoringEntityService entityService;
+    private PublicSharingService publicSharingService;
     @Mock
     private ApplicationContext applicationContext;
 
@@ -54,13 +54,13 @@ class IntegrationsMonitoringServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new IntegrationsMonitoringService(entityService);
+        service = new IntegrationsMonitoringService(publicSharingService);
         ReflectionTestUtils.setField(service, "applicationContext", applicationContext);
     }
 
     @Test
     void skipsInitializationOnCe() {
-        when(entityService.isPe()).thenReturn(false);
+        when(publicSharingService.isPe()).thenReturn(false);
         setConfigs(List.of(new HttpIntegrationMonitoringConfig()));
 
         service.init();
@@ -73,7 +73,7 @@ class IntegrationsMonitoringServiceTest {
         // IntegrationMonitoringConfig.getTargets() returns an empty list (not a List.of(null) NPE)
         // when the config's `target:` block is absent - only ever exercised on the CE path above
         // (which returns before getTargets() is reached at all) without this
-        when(entityService.isPe()).thenReturn(true);
+        when(publicSharingService.isPe()).thenReturn(true);
         setConfigs(List.of(new HttpIntegrationMonitoringConfig()));
 
         service.init();
@@ -83,7 +83,7 @@ class IntegrationsMonitoringServiceTest {
 
     @Test
     void proceedsWithInitializationOnPe() {
-        when(entityService.isPe()).thenReturn(true);
+        when(publicSharingService.isPe()).thenReturn(true);
         HttpIntegrationMonitoringConfig config = new HttpIntegrationMonitoringConfig();
         IntegrationMonitoringTarget target = new IntegrationMonitoringTarget();
         target.setBaseUrl("http://example.com");

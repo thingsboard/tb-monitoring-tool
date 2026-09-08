@@ -77,14 +77,13 @@ public class ProbeMetricsRecorder {
     private final Set<Tags> freshThisCycle = ConcurrentHashMap.newKeySet();
 
     public ProbeMetricsRecorder(MeterRegistry meterRegistry,
-                                 @Value("${monitoring.metrics.otlp.enabled:false}") boolean otlpEnabled,
-                                 @Value("${monitoring.metrics.prometheus.enabled:false}") boolean prometheusEnabled,
+                                 ProbeMetricsProperties metricsProperties,
                                  @Value("${monitoring.domain}") String domain,
                                  @Value("${monitoring.rest.base_url}") String restBaseUrl,
                                  @Value("${monitoring.ws.base_url}") String wsBaseUrl,
                                  @Value("${monitoring.label:}") String label) {
         this.meterRegistry = meterRegistry;
-        this.enabled = otlpEnabled || prometheusEnabled;
+        this.enabled = metricsProperties.getOtlp().isEnabled() || metricsProperties.getPrometheus().isEnabled();
         this.domain = domain;
         this.label = label;
         this.loginEndpoint = this.enabled ? ProbeLabelResolver.resolveLoginEndpoint(restBaseUrl) : null;
@@ -290,14 +289,14 @@ public class ProbeMetricsRecorder {
 
     // shared by transport and integration probes - resolution (and its negative-cache/warn-once
     // dedup) only depends on type+baseUrl; "kind" only affects which Tags come back from a cache hit
-    private Tags tagsFor(ProbeKey key, Supplier<ProbeLabelResolver.ProbeLabels> resolver, String kind) {
+    private Tags tagsFor(ProbeKey key, Supplier<Optional<ProbeLabelResolver.ProbeLabels>> resolver, String kind) {
         Optional<ProbeLabelResolver.ProbeLabels> labels = labelsCache.computeIfAbsent(key, k -> {
-            ProbeLabelResolver.ProbeLabels resolved = resolver.get();
-            if (resolved == null && warnedUnresolvable.add(k)) {
+            Optional<ProbeLabelResolver.ProbeLabels> resolved = resolver.get();
+            if (resolved.isEmpty() && warnedUnresolvable.add(k)) {
                 log.warn("Failed to resolve host:port from {} base URL \"{}\" (missing scheme?) - its probe metrics will not be recorded",
                         k.type() instanceof IntegrationType ? "integration" : "transport", k.baseUrl());
             }
-            return Optional.ofNullable(resolved);
+            return resolved;
         });
         return labels.map(l -> baseTags(l.check(), l.endpoint(), kind)).orElse(null);
     }

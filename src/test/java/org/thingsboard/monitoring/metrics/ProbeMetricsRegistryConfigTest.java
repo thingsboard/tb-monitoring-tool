@@ -73,13 +73,20 @@ public class ProbeMetricsRegistryConfigTest {
     }
 
     // named locals for otlpAlertingEnabled/prometheusEnabled, not adjacent positional literals, so a
-    // future ProbeMetricsRegistryConfig.probeMeterRegistry param reorder can't silently transpose
-    // them here without a compile error
+    // future ProbeMetricsProperties field reorder can't silently transpose them here without a
+    // compile error
     private MeterRegistry probeMeterRegistry(boolean otlpEnabled, String otlpEndpoint, long otlpStepMs,
                                               boolean otlpAlertingEnabled, boolean prometheusEnabled,
                                               int prometheusPort, String prometheusBindAddress) throws IOException {
-        return config.probeMeterRegistry(otlpEnabled, otlpEndpoint, otlpStepMs, otlpAlertingEnabled,
-                prometheusEnabled, prometheusPort, prometheusBindAddress, reporter);
+        ProbeMetricsProperties properties = new ProbeMetricsProperties();
+        properties.getOtlp().setEnabled(otlpEnabled);
+        properties.getOtlp().setEndpoint(otlpEndpoint);
+        properties.getOtlp().setStepMs(otlpStepMs);
+        properties.getOtlp().setAlertingEnabled(otlpAlertingEnabled);
+        properties.getPrometheus().setEnabled(prometheusEnabled);
+        properties.getPrometheus().setPort(prometheusPort);
+        properties.getPrometheus().setBindAddress(prometheusBindAddress);
+        return config.probeMeterRegistry(properties, reporter);
     }
 
     @Test

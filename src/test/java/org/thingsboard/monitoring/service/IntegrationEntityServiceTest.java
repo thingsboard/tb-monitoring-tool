@@ -59,6 +59,25 @@ class IntegrationEntityServiceTest {
         entityService = new IntegrationEntityService(tbClient);
     }
 
+    // lenient(): whichever entity a given test makes "already exist" skips its save* stub,
+    // which strict stubbing would otherwise flag as unused.
+    private void stubNothingExistsYet() {
+        lenient().when(tbClient.getTenantDevice(any())).thenReturn(Optional.empty());
+        lenient().when(tbClient.saveDevice(any())).thenAnswer(inv -> {
+            Device device = inv.getArgument(0);
+            device.setId(new DeviceId(UUID.randomUUID()));
+            return device;
+        });
+        lenient().when(tbClient.getConverters(any())).thenReturn(PageData.emptyPageData());
+        lenient().when(tbClient.saveConverter(any())).thenAnswer(inv -> {
+            Converter converter = inv.getArgument(0);
+            converter.setId(new ConverterId(UUID.randomUUID()));
+            return converter;
+        });
+        lenient().when(tbClient.getIntegrations(any())).thenReturn(PageData.emptyPageData());
+        lenient().when(tbClient.saveIntegration(any())).thenAnswer(inv -> inv.getArgument(0));
+    }
+
     // Pins down the integration/*/integration.json template rendering: the substitution is plain regex
     // replace on raw text before JSON parsing, so a mis-ordered/misspelled placeholder or an unquoted
     // vs. quoted numeric field would otherwise only surface against a real PE server.
@@ -67,20 +86,7 @@ class IntegrationEntityServiceTest {
 
         @BeforeEach
         void setUp() {
-            when(tbClient.getTenantDevice(any())).thenReturn(Optional.empty());
-            when(tbClient.saveDevice(any())).thenAnswer(inv -> {
-                Device device = inv.getArgument(0);
-                device.setId(new DeviceId(UUID.randomUUID()));
-                return device;
-            });
-            when(tbClient.getConverters(any())).thenReturn(PageData.emptyPageData());
-            when(tbClient.saveConverter(any())).thenAnswer(inv -> {
-                Converter converter = inv.getArgument(0);
-                converter.setId(new ConverterId(UUID.randomUUID()));
-                return converter;
-            });
-            when(tbClient.getIntegrations(any())).thenReturn(PageData.emptyPageData());
-            when(tbClient.saveIntegration(any())).thenAnswer(inv -> inv.getArgument(0));
+            stubNothingExistsYet();
         }
 
         @Test
@@ -173,22 +179,7 @@ class IntegrationEntityServiceTest {
             target.setBaseUrl("http://example.com");
 
             // Defaults: nothing exists yet - each test overrides only the lookup(s) it cares about.
-            // lenient(): whichever entity a given test makes "already exist" skips its save* stub,
-            // which strict stubbing would otherwise flag as unused.
-            lenient().when(tbClient.getTenantDevice(any())).thenReturn(Optional.empty());
-            lenient().when(tbClient.saveDevice(any())).thenAnswer(inv -> {
-                Device device = inv.getArgument(0);
-                device.setId(new DeviceId(UUID.randomUUID()));
-                return device;
-            });
-            lenient().when(tbClient.getConverters(any())).thenReturn(PageData.emptyPageData());
-            lenient().when(tbClient.saveConverter(any())).thenAnswer(inv -> {
-                Converter converter = inv.getArgument(0);
-                converter.setId(new ConverterId(UUID.randomUUID()));
-                return converter;
-            });
-            lenient().when(tbClient.getIntegrations(any())).thenReturn(PageData.emptyPageData());
-            lenient().when(tbClient.saveIntegration(any())).thenAnswer(inv -> inv.getArgument(0));
+            stubNothingExistsYet();
         }
 
         @Test

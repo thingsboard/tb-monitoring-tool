@@ -35,6 +35,20 @@ class MqttIntegrationMonitoringConfigTest {
     }
 
     @Test
+    void underscoreHostname_resolvesViaAuthorityFallbackInsteadOfRejecting() {
+        // regression test: URI.getHost() returns null for underscored hosts (a common docker-compose
+        // naming convention) even though the probe-metrics side (ProbeLabelResolver) already falls
+        // back to the raw authority for exactly this case - provisioning used to reject it outright
+        IntegrationMonitoringTarget target = new IntegrationMonitoringTarget();
+        target.setBaseUrl("tcp://tb_mqtt:1883");
+
+        Map<String, String> params = new MqttIntegrationMonitoringConfig().buildTemplateParams(target, "routing-key");
+
+        assertThat(params.get("HOST")).isEqualTo("tb_mqtt");
+        assertThat(params.get("PORT")).isEqualTo("1883");
+    }
+
+    @Test
     void usesPortFromUrlWhenPresent() {
         IntegrationMonitoringTarget target = new IntegrationMonitoringTarget();
         target.setBaseUrl("tcp://broker.example.com:1884");

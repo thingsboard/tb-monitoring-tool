@@ -21,6 +21,7 @@ import org.thingsboard.monitoring.config.transport.TransportType;
 
 import java.net.URI;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Function;
 
 // Derives the "check"/"endpoint" labels used to tag probe metrics.
@@ -42,20 +43,20 @@ public final class ProbeLabelResolver {
     public record ProbeLabels(String check, String endpoint) {
     }
 
-    // returns null (rather than logging) when the endpoint can't be resolved (missing scheme?) - this
-    // is a stateless utility, so warning-dedup across repeated calls for the same target is the
+    // returns empty (rather than logging) when the endpoint can't be resolved (missing scheme?) -
+    // this is a stateless utility, so warning-dedup across repeated calls for the same target is the
     // caller's (ProbeMetricsRecorder's) responsibility, not this class's
-    public static ProbeLabels resolveTransportLabels(TransportType type, String baseUrl) {
+    public static Optional<ProbeLabels> resolveTransportLabels(TransportType type, String baseUrl) {
         URI uri = parseUriOrNull(baseUrl);
         if (uri == null) {
-            return null;
+            return Optional.empty();
         }
         String checkType = resolveCheckType(type, uri);
         String endpoint = resolveEndpoint(uri, checkType);
         if (endpoint == null) {
-            return null;
+            return Optional.empty();
         }
-        return new ProbeLabels(checkType, endpoint);
+        return Optional.of(new ProbeLabels(checkType, endpoint));
     }
 
     // "check" is IntegrationType.getCheckKey() (ihttp, icoap, imqtt) - matches
@@ -64,19 +65,19 @@ public final class ProbeLabelResolver {
     // the transport "check" label, this doesn't split into a secure variant (ihttps etc) - but the
     // default *port* still has to account for the scheme, or a secure integration target with no
     // explicit port gets labelled with a plaintext port it never contacted.
-    public static ProbeLabels resolveIntegrationLabels(IntegrationType type, String baseUrl) {
+    public static Optional<ProbeLabels> resolveIntegrationLabels(IntegrationType type, String baseUrl) {
         URI uri = parseUriOrNull(baseUrl);
         if (uri == null) {
-            return null;
+            return Optional.empty();
         }
         String checkType = type.getCheckKey();
         String protocol = resolveSecureAwareProtocol(type.name().toLowerCase(), uri);
         int defaultPort = DEFAULT_PORTS.getOrDefault(protocol, 0);
         String endpoint = resolveHostPort(uri, defaultPort);
         if (endpoint == null) {
-            return null;
+            return Optional.empty();
         }
-        return new ProbeLabels(checkType, endpoint);
+        return Optional.of(new ProbeLabels(checkType, endpoint));
     }
 
     public static String resolveLoginEndpoint(String restBaseUrl) {
@@ -148,10 +149,15 @@ public final class ProbeLabelResolver {
         return resolveHostPort(uri, DEFAULT_PORTS.get(checkType));
     }
 
+    public record HostPort(String host, int port) {
+    }
+
     // URI.getHost()/getPort() return null/-1 for authorities Java doesn't consider valid hostnames
     // (e.g. underscores in docker-compose service names, a common target naming convention) - fall
-    // back to parsing the authority component directly instead of silently losing the host.
-    public static String resolveHostPort(URI uri, int defaultPort) {
+    // back to parsing the authority component directly instead of silently losing the host. Exposed
+    // (not just resolveHostPort below) so callers needing HOST/PORT separately - e.g. provisioning an
+    // Integration's clientConfiguration - don't have to duplicate this fallback themselves.
+    public static HostPort resolveHost(URI uri, int defaultPort) {
         String host = uri.getHost();
         int port = uri.getPort();
         if (host == null) {
@@ -179,7 +185,12 @@ public final class ProbeLabelResolver {
                 }
             }
         }
-        return host + ":" + (port != -1 ? port : defaultPort);
+        return new HostPort(host, port != -1 ? port : defaultPort);
+    }
+
+    public static String resolveHostPort(URI uri, int defaultPort) {
+        HostPort hostPort = resolveHost(uri, defaultPort);
+        return hostPort == null ? null : hostPort.host() + ":" + hostPort.port();
     }
 
 }

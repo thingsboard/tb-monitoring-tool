@@ -27,7 +27,6 @@ import io.micrometer.registry.otlp.OtlpHttpMetricsSender;
 import io.micrometer.registry.otlp.OtlpMeterRegistry;
 import io.micrometer.registry.otlp.OtlpMetricsSender;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.thingsboard.monitoring.data.MonitoredServiceKey;
@@ -57,24 +56,18 @@ public class ProbeMetricsRegistryConfig {
     private ExecutorService prometheusExecutor;
 
     @Bean
-    public MeterRegistry probeMeterRegistry(
-            @Value("${monitoring.metrics.otlp.enabled:false}") boolean otlpEnabled,
-            @Value("${monitoring.metrics.otlp.endpoint:http://localhost:4318/v1/metrics}") String otlpEndpoint,
-            @Value("${monitoring.metrics.otlp.step_ms:10000}") long otlpStepMs,
-            @Value("${monitoring.metrics.otlp.alerting_enabled:false}") boolean otlpAlertingEnabled,
-            @Value("${monitoring.metrics.prometheus.enabled:false}") boolean prometheusEnabled,
-            @Value("${monitoring.metrics.prometheus.port:9100}") int prometheusPort,
-            @Value("${monitoring.metrics.prometheus.bind_address:0.0.0.0}") String prometheusBindAddress,
-            MonitoringReporter reporter) throws IOException {
+    public MeterRegistry probeMeterRegistry(ProbeMetricsProperties metricsProperties, MonitoringReporter reporter) throws IOException {
+        ProbeMetricsProperties.Otlp otlp = metricsProperties.getOtlp();
+        ProbeMetricsProperties.Prometheus prometheus = metricsProperties.getPrometheus();
         CompositeMeterRegistry composite = new CompositeMeterRegistry();
         try {
-            if (otlpEnabled) {
-                composite.add(createOtlpRegistry(otlpEndpoint, otlpStepMs, otlpAlertingEnabled, reporter));
-                log.info("Probe metrics: OTLP export enabled, pushing to {}", otlpEndpoint);
+            if (otlp.isEnabled()) {
+                composite.add(createOtlpRegistry(otlp.getEndpoint(), otlp.getStepMs(), otlp.isAlertingEnabled(), reporter));
+                log.info("Probe metrics: OTLP export enabled, pushing to {}", otlp.getEndpoint());
             }
-            if (prometheusEnabled) {
-                composite.add(createPrometheusRegistry(prometheusPort, prometheusBindAddress));
-                log.info("Probe metrics: Prometheus scrape endpoint enabled on port {}", prometheusPort);
+            if (prometheus.isEnabled()) {
+                composite.add(createPrometheusRegistry(prometheus.getPort(), prometheus.getBindAddress()));
+                log.info("Probe metrics: Prometheus scrape endpoint enabled on port {}", prometheus.getPort());
             }
         } catch (Exception e) {
             // an already-started OTLP registry's internal publish thread would otherwise leak and

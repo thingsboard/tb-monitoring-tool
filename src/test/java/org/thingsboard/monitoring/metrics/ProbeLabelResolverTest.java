@@ -28,7 +28,7 @@ public class ProbeLabelResolverTest {
     @Test
     public void mqttPlain_mapsToMqttCheckAndConfiguredPort() {
         ProbeLabelResolver.ProbeLabels labels =
-                ProbeLabelResolver.resolveTransportLabels(TransportType.MQTT, "tcp://acme.example.com:1883");
+                ProbeLabelResolver.resolveTransportLabels(TransportType.MQTT, "tcp://acme.example.com:1883").orElseThrow();
         assertThat(labels.check()).isEqualTo("mqtt");
         assertThat(labels.endpoint()).isEqualTo("acme.example.com:1883");
     }
@@ -36,14 +36,14 @@ public class ProbeLabelResolverTest {
     @Test
     public void mqttTls_mapsToMqttsCheck() {
         ProbeLabelResolver.ProbeLabels labels =
-                ProbeLabelResolver.resolveTransportLabels(TransportType.MQTT, "ssl://acme.example.com:8883");
+                ProbeLabelResolver.resolveTransportLabels(TransportType.MQTT, "ssl://acme.example.com:8883").orElseThrow();
         assertThat(labels.check()).isEqualTo("mqtts");
     }
 
     @Test
     public void coapPlain_defaultPortWhenMissing() {
         ProbeLabelResolver.ProbeLabels labels =
-                ProbeLabelResolver.resolveTransportLabels(TransportType.COAP, "coap://acme.example.com");
+                ProbeLabelResolver.resolveTransportLabels(TransportType.COAP, "coap://acme.example.com").orElseThrow();
         assertThat(labels.check()).isEqualTo("coap");
         assertThat(labels.endpoint()).isEqualTo("acme.example.com:5683");
     }
@@ -51,22 +51,22 @@ public class ProbeLabelResolverTest {
     @Test
     public void coapSecure_mapsToCoapsCheck() {
         ProbeLabelResolver.ProbeLabels labels =
-                ProbeLabelResolver.resolveTransportLabels(TransportType.COAP, "coaps://acme.example.com:5684");
+                ProbeLabelResolver.resolveTransportLabels(TransportType.COAP, "coaps://acme.example.com:5684").orElseThrow();
         assertThat(labels.check()).isEqualTo("coaps");
     }
 
     @Test
     public void httpAndHttps_mapByScheme() {
-        assertThat(ProbeLabelResolver.resolveTransportLabels(TransportType.HTTP, "http://acme.example.com").check())
+        assertThat(ProbeLabelResolver.resolveTransportLabels(TransportType.HTTP, "http://acme.example.com").orElseThrow().check())
                 .isEqualTo("http");
-        assertThat(ProbeLabelResolver.resolveTransportLabels(TransportType.HTTP, "https://acme.example.com").check())
+        assertThat(ProbeLabelResolver.resolveTransportLabels(TransportType.HTTP, "https://acme.example.com").orElseThrow().check())
                 .isEqualTo("https");
     }
 
     @Test
     public void lwm2m_alwaysMapsToLwm2mRegardlessOfCoapScheme() {
         ProbeLabelResolver.ProbeLabels labels =
-                ProbeLabelResolver.resolveTransportLabels(TransportType.LWM2M, "coap://acme.example.com:5685");
+                ProbeLabelResolver.resolveTransportLabels(TransportType.LWM2M, "coap://acme.example.com:5685").orElseThrow();
         assertThat(labels.check()).isEqualTo("lwm2m");
         assertThat(labels.endpoint()).isEqualTo("acme.example.com:5685");
     }
@@ -74,14 +74,14 @@ public class ProbeLabelResolverTest {
     @Test
     public void underscoreHostname_stillResolvesEndpoint() {
         ProbeLabelResolver.ProbeLabels labels =
-                ProbeLabelResolver.resolveTransportLabels(TransportType.MQTT, "tcp://tb_mqtt:1883");
+                ProbeLabelResolver.resolveTransportLabels(TransportType.MQTT, "tcp://tb_mqtt:1883").orElseThrow();
         assertThat(labels.endpoint()).isEqualTo("tb_mqtt:1883");
     }
 
     @Test
     public void underscoreHostname_noPort_fallsBackToDefaultPort() {
         ProbeLabelResolver.ProbeLabels labels =
-                ProbeLabelResolver.resolveTransportLabels(TransportType.COAP, "coap://tb_coap");
+                ProbeLabelResolver.resolveTransportLabels(TransportType.COAP, "coap://tb_coap").orElseThrow();
         assertThat(labels.endpoint()).isEqualTo("tb_coap:5683");
     }
 
@@ -90,17 +90,15 @@ public class ProbeLabelResolverTest {
         // exercises the authority.contains("@") branch in resolveHostPort - underscored host still
         // makes URI.getHost() return null, so the fallback must strip "user:pass@" before parsing
         ProbeLabelResolver.ProbeLabels labels =
-                ProbeLabelResolver.resolveTransportLabels(TransportType.MQTT, "mqtt://user:pass@tb_mqtt:1883");
+                ProbeLabelResolver.resolveTransportLabels(TransportType.MQTT, "mqtt://user:pass@tb_mqtt:1883").orElseThrow();
         assertThat(labels.endpoint()).isEqualTo("tb_mqtt:1883");
     }
 
     @Test
-    public void schemelessBaseUrl_resolveTransportLabels_returnsNullInsteadOfNullHostLabel() {
+    public void schemelessBaseUrl_resolveTransportLabels_returnsEmptyInsteadOfNullHostLabel() {
         // "acme.example.com:1883" without a scheme parses as an opaque URI with neither a host nor an
         // authority - must not silently produce a "null:1883" endpoint label
-        ProbeLabelResolver.ProbeLabels labels =
-                ProbeLabelResolver.resolveTransportLabels(TransportType.MQTT, "acme.example.com:1883");
-        assertThat(labels).isNull();
+        assertThat(ProbeLabelResolver.resolveTransportLabels(TransportType.MQTT, "acme.example.com:1883")).isEmpty();
     }
 
     @Test
@@ -130,25 +128,21 @@ public class ProbeLabelResolverTest {
     }
 
     @Test
-    public void resolveTransportLabels_nullBaseUrl_returnsNullInsteadOfThrowing() {
+    public void resolveTransportLabels_nullBaseUrl_returnsEmptyInsteadOfThrowing() {
         // URI.create(null) throws NullPointerException, not IllegalArgumentException
-        ProbeLabelResolver.ProbeLabels labels =
-                ProbeLabelResolver.resolveTransportLabels(TransportType.MQTT, null);
-        assertThat(labels).isNull();
+        assertThat(ProbeLabelResolver.resolveTransportLabels(TransportType.MQTT, null)).isEmpty();
     }
 
     @Test
-    public void resolveTransportLabels_malformedBaseUrl_returnsNullInsteadOfThrowing() {
+    public void resolveTransportLabels_malformedBaseUrl_returnsEmptyInsteadOfThrowing() {
         // unescaped space makes URI.create() throw - must not propagate
-        ProbeLabelResolver.ProbeLabels labels =
-                ProbeLabelResolver.resolveTransportLabels(TransportType.MQTT, "tcp://tb mqtt:1883");
-        assertThat(labels).isNull();
+        assertThat(ProbeLabelResolver.resolveTransportLabels(TransportType.MQTT, "tcp://tb mqtt:1883")).isEmpty();
     }
 
     @Test
     public void integrationLabels_checkTypeGetsIPrefix_toAvoidCollisionWithSameProtocolTransport() {
         ProbeLabelResolver.ProbeLabels labels =
-                ProbeLabelResolver.resolveIntegrationLabels(IntegrationType.HTTP, "http://acme.example.com");
+                ProbeLabelResolver.resolveIntegrationLabels(IntegrationType.HTTP, "http://acme.example.com").orElseThrow();
         assertThat(labels.check()).isEqualTo("ihttp");
         assertThat(labels.endpoint()).isEqualTo("acme.example.com:80");
     }
@@ -156,7 +150,7 @@ public class ProbeLabelResolverTest {
     @Test
     public void integrationLabels_coap_defaultPortWhenMissing() {
         ProbeLabelResolver.ProbeLabels labels =
-                ProbeLabelResolver.resolveIntegrationLabels(IntegrationType.COAP, "coap://acme.example.com");
+                ProbeLabelResolver.resolveIntegrationLabels(IntegrationType.COAP, "coap://acme.example.com").orElseThrow();
         assertThat(labels.check()).isEqualTo("icoap");
         assertThat(labels.endpoint()).isEqualTo("acme.example.com:5683");
     }
@@ -164,7 +158,7 @@ public class ProbeLabelResolverTest {
     @Test
     public void integrationLabels_mqtt_explicitPortIsPreserved() {
         ProbeLabelResolver.ProbeLabels labels =
-                ProbeLabelResolver.resolveIntegrationLabels(IntegrationType.MQTT, "tcp://acme.example.com:1884");
+                ProbeLabelResolver.resolveIntegrationLabels(IntegrationType.MQTT, "tcp://acme.example.com:1884").orElseThrow();
         assertThat(labels.check()).isEqualTo("imqtt");
         assertThat(labels.endpoint()).isEqualTo("acme.example.com:1884");
     }
@@ -174,7 +168,7 @@ public class ProbeLabelResolverTest {
         // the "check" label doesn't split into a secure variant (unlike transports) - but the default
         // port still must, or an https target with no explicit port gets labelled with port 80
         ProbeLabelResolver.ProbeLabels labels =
-                ProbeLabelResolver.resolveIntegrationLabels(IntegrationType.HTTP, "https://acme.example.com");
+                ProbeLabelResolver.resolveIntegrationLabels(IntegrationType.HTTP, "https://acme.example.com").orElseThrow();
         assertThat(labels.check()).isEqualTo("ihttp");
         assertThat(labels.endpoint()).isEqualTo("acme.example.com:443");
     }
@@ -182,7 +176,7 @@ public class ProbeLabelResolverTest {
     @Test
     public void integrationLabels_coaps_defaultPortIsTheSecureOne() {
         ProbeLabelResolver.ProbeLabels labels =
-                ProbeLabelResolver.resolveIntegrationLabels(IntegrationType.COAP, "coaps://acme.example.com");
+                ProbeLabelResolver.resolveIntegrationLabels(IntegrationType.COAP, "coaps://acme.example.com").orElseThrow();
         assertThat(labels.check()).isEqualTo("icoap");
         assertThat(labels.endpoint()).isEqualTo("acme.example.com:5684");
     }
@@ -190,19 +184,19 @@ public class ProbeLabelResolverTest {
     @Test
     public void integrationLabels_mqttSsl_defaultPortIsTheSecureOne() {
         ProbeLabelResolver.ProbeLabels labels =
-                ProbeLabelResolver.resolveIntegrationLabels(IntegrationType.MQTT, "ssl://acme.example.com");
+                ProbeLabelResolver.resolveIntegrationLabels(IntegrationType.MQTT, "ssl://acme.example.com").orElseThrow();
         assertThat(labels.check()).isEqualTo("imqtt");
         assertThat(labels.endpoint()).isEqualTo("acme.example.com:8883");
     }
 
     @Test
-    public void resolveIntegrationLabels_nullBaseUrl_returnsNullInsteadOfThrowing() {
-        assertThat(ProbeLabelResolver.resolveIntegrationLabels(IntegrationType.HTTP, null)).isNull();
+    public void resolveIntegrationLabels_nullBaseUrl_returnsEmptyInsteadOfThrowing() {
+        assertThat(ProbeLabelResolver.resolveIntegrationLabels(IntegrationType.HTTP, null)).isEmpty();
     }
 
     @Test
-    public void resolveIntegrationLabels_schemelessBaseUrl_returnsNull() {
-        assertThat(ProbeLabelResolver.resolveIntegrationLabels(IntegrationType.MQTT, "acme.example.com:1883")).isNull();
+    public void resolveIntegrationLabels_schemelessBaseUrl_returnsEmpty() {
+        assertThat(ProbeLabelResolver.resolveIntegrationLabels(IntegrationType.MQTT, "acme.example.com:1883")).isEmpty();
     }
 
     @Test

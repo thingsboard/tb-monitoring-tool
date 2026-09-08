@@ -100,11 +100,30 @@ public class BaseMonitoringServiceProbeMetricsTest {
         healthCheckers.add(healthChecker);
     }
 
-    @Test
-    public void successfulLoginAndWs_recordsBothAsSuccessful() throws Exception {
+    private void givenHealthyLoginAndWs() throws Exception {
         when(tbClient.logIn()).thenReturn("token");
         when(wsClientFactory.createClient("token")).thenReturn(wsClient);
         when(wsClient.waitForReply()).thenReturn(null);
+    }
+
+    private void givenLoginFails() throws Exception {
+        when(tbClient.logIn()).thenThrow(new RuntimeException("login failed"));
+    }
+
+    private void givenWsConnectFails() throws Exception {
+        when(tbClient.logIn()).thenReturn("token");
+        when(wsClientFactory.createClient("token")).thenThrow(new RuntimeException("connect failed"));
+    }
+
+    private void givenWsSubscribeFails() throws Exception {
+        when(tbClient.logIn()).thenReturn("token");
+        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
+        when(wsClient.waitForReply()).thenThrow(new IllegalStateException("no reply"));
+    }
+
+    @Test
+    public void successfulLoginAndWs_recordsBothAsSuccessful() throws Exception {
+        givenHealthyLoginAndWs();
 
         service.runChecks();
 
@@ -119,9 +138,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
         // instead of BaseMonitoringService measuring the same operation a second time with a raw
         // System.nanoTime() pair. wsClientFactory is a full mock in this test, so that call is never
         // exercised here; it's a 3-line, inspectable change in WsClientFactory itself.
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
-        when(wsClient.waitForReply()).thenReturn(null);
+        givenHealthyLoginAndWs();
 
         service.runChecks();
 
@@ -132,9 +149,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
     @Test
     public void successfulLoginAndWs_neverRecordsWsConnectStageDurationDirectly() throws Exception {
         // guards against the redundant System.nanoTime() measurement creeping back into BaseMonitoringService
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
-        when(wsClient.waitForReply()).thenReturn(null);
+        givenHealthyLoginAndWs();
 
         service.runChecks();
 
@@ -143,7 +158,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
     @Test
     public void loginFailure_recordsLoginFailureAndNeverRecordsWs() throws Exception {
-        when(tbClient.logIn()).thenThrow(new RuntimeException("login failed"));
+        givenLoginFails();
 
         service.runChecks();
 
@@ -153,7 +168,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
     @Test
     public void loginFailure_removesWsProbeMetric() throws Exception {
-        when(tbClient.logIn()).thenThrow(new RuntimeException("login failed"));
+        givenLoginFails();
 
         service.runChecks();
 
@@ -162,7 +177,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
     @Test
     public void loginFailure_neverRecordsLoginRequestStageDuration() throws Exception {
-        when(tbClient.logIn()).thenThrow(new RuntimeException("login failed"));
+        givenLoginFails();
 
         service.runChecks();
 
@@ -171,7 +186,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
     @Test
     public void loginFailure_removesLoginRequestStageDuration() throws Exception {
-        when(tbClient.logIn()).thenThrow(new RuntimeException("login failed"));
+        givenLoginFails();
 
         service.runChecks();
 
@@ -183,7 +198,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
         // transport checks never ran this cycle - their gauges must not keep reporting last cycle's value
         Object transportInfo = new Object();
         when(healthChecker.getCachedInfo()).thenReturn(transportInfo);
-        when(tbClient.logIn()).thenThrow(new RuntimeException("login failed"));
+        givenLoginFails();
 
         service.runChecks();
 
@@ -194,7 +209,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
     @Test
     public void loginFailure_checksTransportAcceptance() throws Exception {
-        when(tbClient.logIn()).thenThrow(new RuntimeException("login failed"));
+        givenLoginFails();
 
         service.runChecks();
 
@@ -204,7 +219,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
     @Test
     public void loginFailure_neverRemovesAcceptedProbeBeforeFallbackRuns() throws Exception {
         // removeAcceptedProbe (in either Removal mode) must never precede the fallback check on the failure path
-        when(tbClient.logIn()).thenThrow(new RuntimeException("login failed"));
+        givenLoginFails();
 
         service.runChecks();
 
@@ -213,8 +228,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
     @Test
     public void wsConnectFailure_recordsWsFailure() throws Exception {
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenThrow(new RuntimeException("connect failed"));
+        givenWsConnectFails();
 
         service.runChecks();
 
@@ -224,8 +238,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
     @Test
     public void wsConnectFailure_neverRecordsConnectStageDuration() throws Exception {
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenThrow(new RuntimeException("connect failed"));
+        givenWsConnectFails();
 
         service.runChecks();
 
@@ -235,8 +248,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
     @Test
     public void wsConnectFailure_removesConnectAndSubscribeStageDurations() throws Exception {
         // subscribe never even ran this cycle - its last value is stale too
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenThrow(new RuntimeException("connect failed"));
+        givenWsConnectFails();
 
         service.runChecks();
 
@@ -246,8 +258,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
     @Test
     public void wsConnectFailure_clearsTransportProbeMetrics() throws Exception {
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenThrow(new RuntimeException("connect failed"));
+        givenWsConnectFails();
 
         service.runChecks();
 
@@ -256,8 +267,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
     @Test
     public void wsConnectFailure_checksTransportAcceptance() throws Exception {
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenThrow(new RuntimeException("connect failed"));
+        givenWsConnectFails();
 
         service.runChecks();
 
@@ -266,8 +276,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
     @Test
     public void wsConnectFailure_neverRemovesAcceptedProbeBeforeFallbackRuns() throws Exception {
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenThrow(new RuntimeException("connect failed"));
+        givenWsConnectFails();
 
         service.runChecks();
 
@@ -276,9 +285,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
     @Test
     public void wsSubscribeFailure_recordsWsFailure() throws Exception {
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
-        when(wsClient.waitForReply()).thenThrow(new IllegalStateException("no reply"));
+        givenWsSubscribeFails();
 
         service.runChecks();
 
@@ -288,9 +295,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
     @Test
     public void wsSubscribeFailure_removesSubscribeStageDurationButNeverConnect() throws Exception {
         // connect already succeeded this cycle (it's how we got here) - only "subscribe" must go away
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
-        when(wsClient.waitForReply()).thenThrow(new IllegalStateException("no reply"));
+        givenWsSubscribeFails();
 
         service.runChecks();
 
@@ -300,9 +305,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
     @Test
     public void wsSubscribeFailure_clearsTransportProbeMetrics() throws Exception {
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
-        when(wsClient.waitForReply()).thenThrow(new IllegalStateException("no reply"));
+        givenWsSubscribeFails();
 
         service.runChecks();
 
@@ -311,9 +314,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
     @Test
     public void wsSubscribeFailure_checksTransportAcceptance() throws Exception {
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
-        when(wsClient.waitForReply()).thenThrow(new IllegalStateException("no reply"));
+        givenWsSubscribeFails();
 
         service.runChecks();
 
@@ -322,9 +323,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
     @Test
     public void wsSubscribeFailure_neverRemovesAcceptedProbeBeforeFallbackRuns() throws Exception {
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
-        when(wsClient.waitForReply()).thenThrow(new IllegalStateException("no reply"));
+        givenWsSubscribeFails();
 
         service.runChecks();
 
@@ -333,9 +332,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
     @Test
     public void successfulRun_neverClearsTransportProbeMetrics() throws Exception {
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
-        when(wsClient.waitForReply()).thenReturn(null);
+        givenHealthyLoginAndWs();
 
         service.runChecks();
 
@@ -345,9 +342,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
     @Test
     public void successfulRun_neverChecksTransportAcceptance() throws Exception {
         // WS is healthy, so E2E already covers this target - checkAccepted() firing too would double-send
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
-        when(wsClient.waitForReply()).thenReturn(null);
+        givenHealthyLoginAndWs();
 
         service.runChecks();
 
@@ -357,9 +352,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
     @Test
     public void successfulRun_removesAcceptedProbeForEachHealthChecker() throws Exception {
         // fresh E2E data means any stale accepted-fallback value must be cleared, not frozen forever
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
-        when(wsClient.waitForReply()).thenReturn(null);
+        givenHealthyLoginAndWs();
 
         service.runChecks();
 
@@ -375,9 +368,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
         when(associate.getCachedInfo()).thenReturn(associateInfo);
         when(healthChecker.getAssociates()).thenReturn(java.util.Map.of("associate-url", associate));
 
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
-        when(wsClient.waitForReply()).thenReturn(null);
+        givenHealthyLoginAndWs();
 
         service.runChecks();
 
@@ -387,9 +378,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
     @Test
     public void unexpectedServiceFailureMidLoop_alsoClearsAcceptedProbeMetrics() throws Exception {
         // caught by the outer handler, not the 3 known branches - must still clear kind="accepted"
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
-        when(wsClient.waitForReply()).thenReturn(null);
+        givenHealthyLoginAndWs();
         doThrow(new ServiceFailureException(MonitoredServiceKey.GENERAL, new RuntimeException("boom")))
                 .when(healthChecker).check(any());
 
@@ -400,9 +389,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
     @Test
     public void unexpectedThrowableMidLoop_alsoClearsAcceptedProbeMetrics() throws Exception {
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
-        when(wsClient.waitForReply()).thenReturn(null);
+        givenHealthyLoginAndWs();
         doThrow(new RuntimeException("boom")).when(healthChecker).check(any());
 
         service.runChecks();
@@ -424,9 +411,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
         target.setBaseUrl("tcp://this-host-does-not-resolve.invalid:1883");
         when(healthChecker.getTarget()).thenReturn(target);
 
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
-        when(wsClient.waitForReply()).thenReturn(null);
+        givenHealthyLoginAndWs();
 
         assertDoesNotThrow(() -> service.runChecks());
 
@@ -447,9 +432,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
         target.setBaseUrl("tcp://this-host-does-not-resolve.invalid:1883");
         when(healthChecker.getTarget()).thenReturn(target);
 
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
-        when(wsClient.waitForReply()).thenReturn(null);
+        givenHealthyLoginAndWs();
 
         service.runChecks();
 
@@ -475,9 +458,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
         associates.put("tcp://127.0.0.1:1883", existingAssociate);
         when(healthChecker.getAssociates()).thenReturn(associates);
 
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
-        when(wsClient.waitForReply()).thenReturn(null);
+        givenHealthyLoginAndWs();
 
         service.runChecks();
 
@@ -503,9 +484,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
                 (List) ReflectionTestUtils.getField(service, "healthCheckers");
         healthCheckers.add(secondChecker);
 
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
-        when(wsClient.waitForReply()).thenReturn(null);
+        givenHealthyLoginAndWs();
 
         assertDoesNotThrow(() -> service.runChecks());
 
@@ -546,9 +525,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
         associates.put("old-decommissioned-ip", decommissioned); // no longer resolves - must be removed
         when(healthChecker.getAssociates()).thenReturn(associates);
 
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
-        when(wsClient.waitForReply()).thenReturn(null);
+        givenHealthyLoginAndWs();
 
         service.runChecks();
 
@@ -569,9 +546,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
     @Test
     public void runChecks_alwaysRecordsHeartbeatOnce_regardlessOfOutcome() throws Exception {
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
-        when(wsClient.waitForReply()).thenReturn(null);
+        givenHealthyLoginAndWs();
 
         service.runChecks();
 
@@ -580,7 +555,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
     @Test
     public void runChecks_loginFailure_stillRecordsHeartbeatOnce() throws Exception {
-        when(tbClient.logIn()).thenThrow(new RuntimeException("login failed"));
+        givenLoginFails();
 
         service.runChecks();
 
@@ -595,7 +570,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
         // EARLIEST probeMetricsRecorder call in this failure path - recordProbe(LOGIN, false) runs
         // last (in the finally block), so verifying against it alone wouldn't catch startCycle()
         // being moved to anywhere before that point.
-        when(tbClient.logIn()).thenThrow(new RuntimeException("login failed"));
+        givenLoginFails();
 
         service.runChecks();
 
@@ -619,9 +594,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
         PageData<EntityData> result = new PageData<>(List.of(entityDataFor(device1), entityDataFor(device2)), 1, 2, false);
         when(tbClient.findEntityDataByQuery(any())).thenReturn(result);
 
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
-        when(wsClient.waitForReply()).thenReturn(null);
+        givenHealthyLoginAndWs();
 
         service.runChecks();
 
@@ -645,9 +618,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
         PageData<EntityData> result = new PageData<>(List.of(entityDataFor(presentDevice)), 1, 1, false);
         when(tbClient.findEntityDataByQuery(any())).thenReturn(result);
 
-        when(tbClient.logIn()).thenReturn("token");
-        when(wsClientFactory.createClient("token")).thenReturn(wsClient);
-        when(wsClient.waitForReply()).thenReturn(null);
+        givenHealthyLoginAndWs();
 
         service.runChecks();
 

@@ -51,9 +51,15 @@ public class MqttIntegrationHealthChecker extends IntegrationHealthChecker<MqttI
             topic = topicFilter.get("filter").asText();
             qos = topicFilter.get("qos").asInt();
 
-            mqttClient = MqttUtils.connect(target.getBaseUrl(), userName, config.getRequestTimeoutMs());
+            mqttClient = connect(target.getBaseUrl(), userName, config.getRequestTimeoutMs());
             log.debug("Initialized MQTT client for URI {}", mqttClient.getServerURI());
         }
+    }
+
+    // seam for tests to hand back a mock client without a real network connection or mocking the
+    // static MqttUtils.connect
+    protected MqttClient connect(String baseUrl, String userName, int requestTimeoutMs) throws Exception {
+        return MqttUtils.connect(baseUrl, userName, requestTimeoutMs);
     }
 
     @Override

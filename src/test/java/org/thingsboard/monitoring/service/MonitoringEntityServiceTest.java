@@ -42,8 +42,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-// Covers the delegation surface this PR added to MonitoringEntityService (isPe(),
-// checkEntities(IntegrationMonitoringConfig, ...)), the public dashboard link building (this PR
+// Covers the delegation surface this PR added to MonitoringEntityService
+// (checkEntities(IntegrationMonitoringConfig, ...)), the public dashboard link building (this PR
 // simplified it from a reflection-based TbClient.baseURL read to a plain getter), and dashboard
 // versioning (the largest new logic this PR added to this class). The version lives inside
 // Dashboard.configuration rather than as a saved attribute - ThingsBoard CE has no support for
@@ -64,13 +64,6 @@ class MonitoringEntityServiceTest {
     @BeforeEach
     void setUp() {
         entityService = new MonitoringEntityService(tbClient, publicSharingService, integrationEntityService);
-    }
-
-    @Test
-    void isPeDelegatesToPublicSharingService() {
-        when(publicSharingService.isPe()).thenReturn(true);
-
-        assertThat(entityService.isPe()).isTrue();
     }
 
     @Test

@@ -29,6 +29,7 @@ import org.thingsboard.monitoring.data.notification.InfoNotification;
 import org.thingsboard.monitoring.notification.NotificationService;
 import org.thingsboard.monitoring.service.BaseMonitoringService;
 import org.thingsboard.monitoring.service.MonitoringEntityService;
+import org.thingsboard.monitoring.service.PublicSharingService;
 import jakarta.annotation.PreDestroy;
 
 import java.util.List;
@@ -45,6 +46,7 @@ public class ThingsboardMonitoringApplication {
 
     private final List<BaseMonitoringService<?, ?>> monitoringServices;
     private final MonitoringEntityService entityService;
+    private final PublicSharingService publicSharingService;
     private final NotificationService notificationService;
 
     @Value("${monitoring.monitoring_rate_ms}")
@@ -68,7 +70,7 @@ public class ThingsboardMonitoringApplication {
     @EventListener(ApplicationReadyEvent.class)
     public void startMonitoring() {
         entityService.checkEntities();
-        log.info("Starting monitoring for {}", entityService.isPe() ? "PE" : "CE");
+        log.info("Starting monitoring for {}", publicSharingService.isPe() ? "PE" : "CE");
         monitoringServices.forEach(BaseMonitoringService::init);
 
         for (int i = 0; i < monitoringServices.size(); i++) {
