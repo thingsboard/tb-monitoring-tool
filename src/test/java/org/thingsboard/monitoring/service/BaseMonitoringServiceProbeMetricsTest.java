@@ -412,7 +412,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
     @Test
     public void reconciliationFailureAfterSuccessfulCheck_doesNotClearThatTargetsMetrics() throws Exception {
         // healthChecker.check() completes normally, so its finally block already recorded fresh
-        // probe_success/probe_duration_seconds for this cycle. The domain-IP-associate reconciliation
+        // probe_success/probe_duration_ms for this cycle. The domain-IP-associate reconciliation
         // that runs afterward (only when isCheckDomainIps() is true) then fails - here because the
         // configured host can never resolve (RFC 2606 reserves the ".invalid" TLD for exactly this).
         // That late, unrelated bookkeeping failure must not wipe the metrics check() already recorded.

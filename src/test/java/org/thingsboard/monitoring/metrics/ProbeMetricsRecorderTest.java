@@ -108,10 +108,10 @@ public class ProbeMetricsRecorderTest {
         recorder.recordActionDuration(target, "request", TimeUnit.MILLISECONDS.toNanos(9));
         recorder.recordActionDuration(target, "ws_update", TimeUnit.MILLISECONDS.toNanos(11));
 
-        assertThat(registry.get("probe_duration_seconds")
-                .tags("check", "ihttp", "action", "request").gauge().value()).isEqualTo(0.009d, within(1e-9));
-        assertThat(registry.get("probe_duration_seconds")
-                .tags("check", "ihttp", "action", "ws_update").gauge().value()).isEqualTo(0.011d, within(1e-9));
+        assertThat(registry.get("probe_duration_ms")
+                .tags("check", "ihttp", "action", "request").gauge().value()).isEqualTo(9d);
+        assertThat(registry.get("probe_duration_ms")
+                .tags("check", "ihttp", "action", "ws_update").gauge().value()).isEqualTo(11d);
     }
 
     @Test
@@ -285,10 +285,10 @@ public class ProbeMetricsRecorderTest {
         recorder.recordActionDuration(target, "request", TimeUnit.MILLISECONDS.toNanos(8));
         recorder.recordActionDuration(target, "ws_update", TimeUnit.MILLISECONDS.toNanos(700));
 
-        assertThat(registry.get("probe_duration_seconds")
-                .tags("check", "mqtt", "action", "request").gauge().value()).isEqualTo(0.008d, within(1e-9));
-        assertThat(registry.get("probe_duration_seconds")
-                .tags("check", "mqtt", "action", "ws_update").gauge().value()).isEqualTo(0.7d, within(1e-9));
+        assertThat(registry.get("probe_duration_ms")
+                .tags("check", "mqtt", "action", "request").gauge().value()).isEqualTo(8d);
+        assertThat(registry.get("probe_duration_ms")
+                .tags("check", "mqtt", "action", "ws_update").gauge().value()).isEqualTo(700d);
         assertThat(registry.getMeters()).hasSize(2); // one series per stage, correctly distinct
     }
 
@@ -311,8 +311,8 @@ public class ProbeMetricsRecorderTest {
         recorder.startCycle(); // next cycle - this target's fresh-this-cycle protection no longer applies
         recorder.removeActionDuration(target, "request");
 
-        assertThat(registry.find("probe_duration_seconds").tags("action", "request").gauge()).isNull();
-        assertThat(registry.get("probe_duration_seconds").tags("action", "ws_update").gauge().value()).isEqualTo(0.7d, within(1e-9));
+        assertThat(registry.find("probe_duration_ms").tags("action", "request").gauge()).isNull();
+        assertThat(registry.get("probe_duration_ms").tags("action", "ws_update").gauge().value()).isEqualTo(700d);
         assertThat(registry.get("probe_success").tags("check", "mqtt").gauge().value()).isEqualTo(1d);
         assertThat(registry.getMeters()).hasSize(2);
     }
@@ -330,7 +330,7 @@ public class ProbeMetricsRecorderTest {
         recorder.recordActionDuration(a, "request", TimeUnit.MILLISECONDS.toNanos(8));
         recorder.removeActionDuration(b, "request");
 
-        assertThat(registry.get("probe_duration_seconds").tags("action", "request").gauge().value()).isEqualTo(0.008d, within(1e-9));
+        assertThat(registry.get("probe_duration_ms").tags("action", "request").gauge().value()).isEqualTo(8d);
     }
 
     @Test
@@ -359,8 +359,8 @@ public class ProbeMetricsRecorderTest {
 
         recorder.recordActionDuration(target, "request", TimeUnit.MILLISECONDS.toNanos(12));
 
-        assertThat(registry.get("probe_duration_seconds")
-                .tags("check", "mqtt", "action", "request").gauge().value()).isEqualTo(0.012d, within(1e-9));
+        assertThat(registry.get("probe_duration_ms")
+                .tags("check", "mqtt", "action", "request").gauge().value()).isEqualTo(12d);
         assertThat(registry.getMeters()).hasSize(1);
 
         recorder.removeProbe(target, ProbeMetricsRecorder.Removal.PERMANENT);

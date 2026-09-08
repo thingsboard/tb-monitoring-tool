@@ -176,11 +176,11 @@ monitoring:
     # down). A transport's own check failing sets 0; it only goes ABSENT if login/WS died upstream
     # and it was never reached this cycle. check="ws" is 0 if WS itself failed, ABSENT if login
     # failed first - alert on "absent OR 0" for ws.
-    # probe_duration_seconds{action}: disappears (not stale) once its stage stops running/passing.
+    # probe_duration_ms{action}: disappears (not stale) once its stage stops running/passing.
     # tb_monitoring_last_run_timestamp_seconds: heartbeat: alert on time() - metric > N to catch a dead
     # prober, which probe_success can't (it only reports targets actually checked).
     otlp:
-      # Push probe_success/probe_duration_seconds via OTLP/HTTP to an OTel Collector
+      # Push probe_success/probe_duration_ms via OTLP/HTTP to an OTel Collector
       enabled: '${METRICS_OTLP_ENABLED:false}'
       endpoint: '${METRICS_OTLP_ENDPOINT:http://localhost:4318/v1/metrics}'
       # Keep <= monitoring.monitoring_rate_ms or short outages can be missed by OTLP entirely
