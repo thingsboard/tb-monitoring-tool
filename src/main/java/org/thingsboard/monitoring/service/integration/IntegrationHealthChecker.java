@@ -18,15 +18,20 @@ package org.thingsboard.monitoring.service.integration;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.thingsboard.common.util.JacksonUtil;
 import org.thingsboard.monitoring.config.integration.IntegrationInfo;
 import org.thingsboard.monitoring.config.integration.IntegrationMonitoringConfig;
 import org.thingsboard.monitoring.config.integration.IntegrationMonitoringTarget;
 import org.thingsboard.monitoring.config.integration.IntegrationType;
 import org.thingsboard.monitoring.service.BaseHealthChecker;
+import org.thingsboard.monitoring.service.IntegrationEntityService;
 
 @Slf4j
 public abstract class IntegrationHealthChecker<C extends IntegrationMonitoringConfig> extends BaseHealthChecker<C, IntegrationMonitoringTarget> {
+
+    @Autowired
+    private IntegrationEntityService integrationEntityService;
 
     public IntegrationHealthChecker(C config, IntegrationMonitoringTarget target) {
         super(config, target);
@@ -34,7 +39,7 @@ public abstract class IntegrationHealthChecker<C extends IntegrationMonitoringCo
 
     @Override
     protected final void initialize() {
-        entityService.checkEntities(config, target);
+        integrationEntityService.checkEntities(config, target);
     }
 
     @Override

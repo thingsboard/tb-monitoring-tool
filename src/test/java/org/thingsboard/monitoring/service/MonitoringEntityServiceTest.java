@@ -21,8 +21,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.thingsboard.monitoring.client.TbClient;
-import org.thingsboard.monitoring.config.integration.HttpIntegrationMonitoringConfig;
-import org.thingsboard.monitoring.config.integration.IntegrationMonitoringTarget;
 import org.thingsboard.common.util.JacksonUtil;
 import org.thingsboard.monitoring.util.ResourceUtils;
 import org.thingsboard.server.common.data.Dashboard;
@@ -42,13 +40,13 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-// Covers the delegation surface this PR added to MonitoringEntityService
-// (checkEntities(IntegrationMonitoringConfig, ...)), the public dashboard link building (this PR
-// simplified it from a reflection-based TbClient.baseURL read to a plain getter), and dashboard
-// versioning (the largest new logic this PR added to this class). The version lives inside
-// Dashboard.configuration rather than as a saved attribute - ThingsBoard CE has no support for
-// attribute writes on DASHBOARD entities ("Not Implemented!"), only PE does. The rule
-// chain/asset/device-provisioning logic predates this PR and isn't covered here.
+// Covers the public dashboard link building (this PR simplified it from a reflection-based
+// TbClient.baseURL read to a plain getter), and dashboard versioning (the largest new logic this
+// PR added to this class). The version lives inside Dashboard.configuration rather than as a saved
+// attribute - ThingsBoard CE has no support for attribute writes on DASHBOARD entities ("Not
+// Implemented!"), only PE does. The rule chain/asset/device-provisioning logic predates this PR and
+// isn't covered here. Integration entity provisioning is IntegrationHealthChecker's own concern now
+// (it injects IntegrationEntityService directly) - see IntegrationEntityServiceTest.
 @ExtendWith(MockitoExtension.class)
 class MonitoringEntityServiceTest {
 
@@ -56,24 +54,12 @@ class MonitoringEntityServiceTest {
     private TbClient tbClient;
     @Mock
     private PublicSharingService publicSharingService;
-    @Mock
-    private IntegrationEntityService integrationEntityService;
 
     private MonitoringEntityService entityService;
 
     @BeforeEach
     void setUp() {
-        entityService = new MonitoringEntityService(tbClient, publicSharingService, integrationEntityService);
-    }
-
-    @Test
-    void checkEntitiesForIntegrationDelegatesToIntegrationEntityService() {
-        HttpIntegrationMonitoringConfig config = new HttpIntegrationMonitoringConfig();
-        IntegrationMonitoringTarget target = new IntegrationMonitoringTarget();
-
-        entityService.checkEntities(config, target);
-
-        verify(integrationEntityService).checkEntities(config, target);
+        entityService = new MonitoringEntityService(tbClient, publicSharingService);
     }
 
     @Test

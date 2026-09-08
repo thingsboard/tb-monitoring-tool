@@ -25,8 +25,6 @@ import org.springframework.stereotype.Service;
 import org.thingsboard.common.util.JacksonUtil;
 import org.thingsboard.monitoring.client.TbClient;
 import org.thingsboard.monitoring.config.DeviceConfig;
-import org.thingsboard.monitoring.config.integration.IntegrationMonitoringConfig;
-import org.thingsboard.monitoring.config.integration.IntegrationMonitoringTarget;
 import org.thingsboard.monitoring.config.transport.TransportMonitoringConfig;
 import org.thingsboard.monitoring.config.transport.TransportMonitoringTarget;
 import org.thingsboard.monitoring.config.transport.TransportType;
@@ -89,7 +87,6 @@ public class MonitoringEntityService {
 
     private final TbClient tbClient;
     private final PublicSharingService publicSharingService;
-    private final IntegrationEntityService integrationEntityService;
 
     @Value("${monitoring.calculated_fields.enabled:true}")
     private boolean calculatedFieldsMonitoringEnabled;
@@ -322,12 +319,6 @@ public class MonitoringEntityService {
 
     private String buildPublicDashboardLink(DashboardId dashboardId, String publicCustomerId) {
         return String.format("%s/dashboard/%s?publicId=%s", tbClient.getBaseUrl(), dashboardId.getId().toString(), publicCustomerId);
-    }
-
-    // Integrations Framework is PE-only; this codepath is only ever exercised when an
-    // integration check is enabled in config, which only makes sense against a PE target.
-    public void checkEntities(IntegrationMonitoringConfig config, IntegrationMonitoringTarget target) {
-        integrationEntityService.checkEntities(config, target);
     }
 
 }
