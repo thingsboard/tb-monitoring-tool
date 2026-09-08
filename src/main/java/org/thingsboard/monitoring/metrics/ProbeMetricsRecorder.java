@@ -39,7 +39,9 @@ import java.util.function.Supplier;
 public class ProbeMetricsRecorder {
 
     public static final String PROBE_SUCCESS_METRIC = "probe_success";
-    public static final String PROBE_DURATION_METRIC = "probe_duration_ms";
+    // Prometheus base-unit convention is seconds, not ms - matches blackbox_exporter's own
+    // probe_duration_seconds, which probe_success is already deliberately named after.
+    public static final String PROBE_DURATION_METRIC = "probe_duration_seconds";
     public static final String MONITORING_HEARTBEAT_METRIC = "tb_monitoring_last_run_timestamp_seconds";
     private static final String KIND_PROBE = "probe";
     private static final String KIND_ACCEPTED = "accepted";
@@ -104,13 +106,13 @@ public class ProbeMetricsRecorder {
         });
     }
 
-    // takes nanos (like reportLatency) rather than ms, so callers measuring with TbStopWatch don't
-    // each have to repeat their own "/ 1_000_000" - this method is the one place that knows the
-    // exported gauge's unit is milliseconds
+    // takes nanos (like reportLatency) rather than seconds, so callers measuring with TbStopWatch
+    // don't each have to convert it themselves - this method is the one place that knows the
+    // exported gauge's unit is seconds (Prometheus base-unit convention)
     public void recordActionDuration(Object serviceKey, String action, long durationNanos) {
         withTags(serviceKey, "record action duration", tags -> {
             actionsByBaseTags.computeIfAbsent(tags, k -> ConcurrentHashMap.newKeySet()).add(action);
-            setGauge(PROBE_DURATION_METRIC, tags.and("action", action), durationNanos / 1_000_000d);
+            setGauge(PROBE_DURATION_METRIC, tags.and("action", action), durationNanos / 1_000_000_000d);
         });
     }
 

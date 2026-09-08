@@ -132,7 +132,7 @@ public class BaseHealthCheckerProbeMetricsTest {
 
     @Test
     public void failedSendTestPayload_removesRequestAndWsUpdateStageDurations() {
-        // the specific probe that didn't respond must lose its probe_duration_ms gauge this cycle,
+        // the specific probe that didn't respond must lose its probe_duration_seconds gauge this cycle,
         // and ws_update never even ran this cycle - its last value is stale too
         checker.failOnSend = true;
 
