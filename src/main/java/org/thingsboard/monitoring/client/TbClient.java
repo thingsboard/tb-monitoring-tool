@@ -19,19 +19,16 @@ import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
+import org.thingsboard.monitoring.util.RestTemplateUtils;
 import org.thingsboard.rest.client.RestClient;
-import org.thingsboard.server.common.data.Dashboard;
-import org.thingsboard.server.common.data.asset.Asset;
 import org.thingsboard.server.common.data.id.AssetId;
 import org.thingsboard.server.common.data.id.DashboardId;
 
-import java.time.Duration;
 import java.util.Optional;
+import java.util.UUID;
 
 @Component
 @Slf4j
@@ -44,10 +41,7 @@ public class TbClient extends RestClient {
 
     public TbClient(@Value("${monitoring.rest.base_url}") String baseUrl,
                     @Value("${monitoring.rest.request_timeout_ms}") int requestTimeoutMs) {
-        super(new RestTemplateBuilder()
-                .connectTimeout(Duration.ofMillis(requestTimeoutMs))
-                .readTimeout(Duration.ofMillis(requestTimeoutMs))
-                .build(), baseUrl);
+        super(RestTemplateUtils.build(requestTimeoutMs), baseUrl);
     }
 
     @PostConstruct
@@ -60,41 +54,46 @@ public class TbClient extends RestClient {
         return getToken();
     }
 
+    // RestClient.baseURL is protected but has no accessor of its own.
+    public String getBaseUrl() {
+        return baseURL;
+    }
+
     // A dedicated "type": "CE"/"PE" field, put there specifically to answer this question - not a
     // heuristic. Requires auth (any role, including CUSTOMER_USER) but that's already established
-    // by the time this is called.
-    public Optional<JsonNode> getSystemVersionInfo() {
+    // by the time this is called. The PE RestClient's getSystemInfo() DTO doesn't carry "type", so
+    // the endpoint is hit directly here instead.
+    public Optional<Edition> getEdition() {
         try {
             JsonNode info = restTemplate.getForObject(baseURL + "/api/system/info", JsonNode.class);
-            return Optional.ofNullable(info);
+            String type = info != null ? info.path("type").asText("") : "";
+            return type.isEmpty() ? Optional.empty() : Optional.of("PE".equalsIgnoreCase(type) ? Edition.PE : Edition.CE);
         } catch (Exception e) {
             log.debug("Failed to fetch /api/system/info", e);
             return Optional.empty();
         }
     }
 
-    // CE-only REST call, added directly here for CE targets - see MonitoringEntityService.
-    public Optional<Asset> assignAssetToPublicCustomer(AssetId assetId) {
-        try {
-            ResponseEntity<Asset> asset = restTemplate.postForEntity(baseURL + "/api/customer/public/asset/{assetId}", null, Asset.class, assetId.getId());
-            return Optional.ofNullable(asset.getBody());
-        } catch (HttpClientErrorException e) {
-            if (e.getStatusCode() == HttpStatus.NOT_FOUND) {
-                return Optional.empty();
-            }
-            throw e;
-        }
+    // CE-only REST calls, added directly here for CE targets - see PublicSharingService.
+    public void assignAssetToPublicCustomer(AssetId assetId) {
+        postForPublicCustomer("/api/customer/public/asset/{id}", assetId.getId());
     }
 
-    public Optional<Dashboard> assignDashboardToPublicCustomer(DashboardId dashboardId) {
+    public void assignDashboardToPublicCustomer(DashboardId dashboardId) {
+        postForPublicCustomer("/api/customer/public/dashboard/{id}", dashboardId.getId());
+    }
+
+    private void postForPublicCustomer(String path, UUID id) {
         try {
-            ResponseEntity<Dashboard> dashboard = restTemplate.postForEntity(baseURL + "/api/customer/public/dashboard/{dashboardId}", null, Dashboard.class, dashboardId.getId());
-            return Optional.ofNullable(dashboard.getBody());
+            restTemplate.postForEntity(baseURL + path, null, Void.class, id);
         } catch (HttpClientErrorException e) {
-            if (e.getStatusCode() == HttpStatus.NOT_FOUND) {
-                return Optional.empty();
+            if (e.getStatusCode() != HttpStatus.NOT_FOUND) {
+                throw e;
             }
-            throw e;
+            // CE always has a public customer - a 404 here means the entity itself is gone, not that
+            // the public-customer feature is missing. Silently leaving it non-public would only
+            // surface later as a missing public dashboard link, with nothing pointing back to why.
+            log.warn("Failed to assign {} to the public customer - got 404 from {}", id, path);
         }
     }
 

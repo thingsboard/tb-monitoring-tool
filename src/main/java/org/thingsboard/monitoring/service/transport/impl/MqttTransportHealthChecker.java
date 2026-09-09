@@ -16,12 +16,7 @@
 package org.thingsboard.monitoring.service.transport.impl;
 
 import lombok.extern.slf4j.Slf4j;
-import org.eclipse.paho.client.mqttv3.IMqttToken;
-import org.eclipse.paho.client.mqttv3.MqttAsyncClient;
 import org.eclipse.paho.client.mqttv3.MqttClient;
-import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
-import org.eclipse.paho.client.mqttv3.MqttMessage;
-import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
@@ -29,6 +24,7 @@ import org.thingsboard.monitoring.config.transport.MqttTransportMonitoringConfig
 import org.thingsboard.monitoring.config.transport.TransportMonitoringTarget;
 import org.thingsboard.monitoring.config.transport.TransportType;
 import org.thingsboard.monitoring.service.transport.TransportHealthChecker;
+import org.thingsboard.monitoring.util.MqttUtils;
 
 @Component
 @Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
@@ -46,28 +42,21 @@ public class MqttTransportHealthChecker extends TransportHealthChecker<MqttTrans
     @Override
     protected void initClient() throws Exception {
         if (mqttClient == null || !mqttClient.isConnected()) {
-            String clientId = MqttAsyncClient.generateClientId();
             String accessToken = target.getDevice().getCredentials().getCredentialsId();
-            mqttClient = new MqttClient(target.getBaseUrl(), clientId, new MemoryPersistence());
-            mqttClient.setTimeToWait(config.getRequestTimeoutMs());
-
-            MqttConnectOptions options = new MqttConnectOptions();
-            options.setUserName(accessToken);
-            options.setConnectionTimeout(config.getRequestTimeoutMs() / 1000);
-            IMqttToken result = mqttClient.connectWithResult(options);
-            if (result.getException() != null) {
-                throw result.getException();
-            }
+            mqttClient = MqttUtils.connect(target.getBaseUrl(), accessToken, config.getRequestTimeoutMs());
             log.debug("Initialized MQTT client for URI {}", mqttClient.getServerURI());
         }
     }
 
     @Override
     protected void sendTestPayload(String payload) throws Exception {
-        MqttMessage message = new MqttMessage();
-        message.setPayload(payload.getBytes());
-        message.setQos(config.getQos());
-        mqttClient.publish(DEVICE_TELEMETRY_TOPIC, message);
+        mqttClient.publish(DEVICE_TELEMETRY_TOPIC, MqttUtils.message(payload, config.getQos()));
+    }
+
+    @Override
+    protected void sendAcceptedTestPayload(String payload) throws Exception {
+        // force QoS 1 - at QoS 0 publish() never confirms broker receipt, defeating this fallback's purpose
+        mqttClient.publish(DEVICE_TELEMETRY_TOPIC, MqttUtils.message(payload, 1));
     }
 
     @Override

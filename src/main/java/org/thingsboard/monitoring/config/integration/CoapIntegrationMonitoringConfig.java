@@ -19,6 +19,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
+import java.util.Map;
+
 @Component
 @ConditionalOnProperty(name = "monitoring.integrations.coap.enabled", havingValue = "true")
 @ConfigurationProperties(prefix = "monitoring.integrations.coap")
@@ -27,6 +29,11 @@ public class CoapIntegrationMonitoringConfig extends IntegrationMonitoringConfig
     @Override
     public IntegrationType getIntegrationType() {
         return IntegrationType.COAP;
+    }
+
+    @Override
+    public Map<String, String> buildTemplateParams(IntegrationMonitoringTarget target, String routingKey) {
+        return baseUrlTemplateParams(target, routingKey);
     }
 
 }

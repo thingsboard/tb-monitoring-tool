@@ -1,7 +1,10 @@
 {
   "type": "HTTP",
-  "debugFailures": true,
-  "debugAll": false,
+  "debugMode": false,
+  "debugSettings": {
+    "failuresEnabled": true,
+    "allEnabled": false
+  },
   "enabled": true,
   "allowCreateDevicesOrAssets": false,
   "defaultConverterId": null,
@@ -9,8 +12,8 @@
   "routingKey": null,
   "configuration": {
     "metadata": {},
-    "baseUrl": "%1$s",
-    "httpEndpoint": "%1$s/api/v1/integrations/http/%2$s",
+    "baseUrl": "${MONITORING:BASE_URL}",
+    "httpEndpoint": "${MONITORING:BASE_URL}/api/v1/integrations/http/${MONITORING:ROUTING_KEY}",
     "enableSecurity": false,
     "headersFilter": {},
     "replaceNoContentToOk": false

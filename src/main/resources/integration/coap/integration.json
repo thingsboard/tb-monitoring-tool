@@ -1,7 +1,10 @@
 {
   "type": "COAP",
-  "debugFailures": true,
-  "debugAll": false,
+  "debugMode": false,
+  "debugSettings": {
+    "failuresEnabled": true,
+    "allEnabled": false
+  },
   "enabled": true,
   "allowCreateDevicesOrAssets": false,
   "defaultConverterId": null,
@@ -10,10 +13,10 @@
   "configuration": {
     "metadata": {},
     "clientConfiguration": {
-      "baseUrl": "%1$s",
+      "baseUrl": "${MONITORING:BASE_URL}",
       "dtlsBaseUrl": "",
       "securityMode": "NO_SECURE",
-      "coapEndpoint": "%1$s/i/%2$s",
+      "coapEndpoint": "${MONITORING:BASE_URL}/i/${MONITORING:ROUTING_KEY}",
       "dtlsCoapEndpoint": ""
     }
   },

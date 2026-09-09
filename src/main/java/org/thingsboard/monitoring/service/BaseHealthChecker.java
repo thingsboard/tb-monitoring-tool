@@ -28,6 +28,8 @@ import org.thingsboard.monitoring.config.MonitoringTarget;
 import org.thingsboard.monitoring.data.Latencies;
 import org.thingsboard.monitoring.data.MonitoredServiceKey;
 import org.thingsboard.monitoring.data.ServiceFailureException;
+import org.thingsboard.monitoring.data.notification.ShortNameProvider;
+import org.thingsboard.monitoring.metrics.ProbeMetricsRecorder;
 import org.thingsboard.monitoring.util.TbStopWatch;
 
 import java.util.HashMap;
@@ -50,6 +52,8 @@ public abstract class BaseHealthChecker<C extends MonitoringConfig, T extends Mo
     @Autowired
     private MonitoringReporter reporter;
     @Autowired
+    private ProbeMetricsRecorder probeMetricsRecorder;
+    @Autowired
     private TbStopWatch stopWatch;
     @Value("${monitoring.check_timeout_ms}")
     private int resultCheckTimeoutMs;
@@ -59,40 +63,40 @@ public abstract class BaseHealthChecker<C extends MonitoringConfig, T extends Mo
 
     public static final String TEST_TELEMETRY_KEY = "testData";
     public static final String TEST_CF_TELEMETRY_KEY = "testDataCf";
+    // separate key so a late checkAccepted() message can't be mistaken for check()'s expected value
+    public static final String ACCEPTED_TEST_TELEMETRY_KEY = "acceptedTestData";
 
     @PostConstruct
     private void init() {
         info = getInfo();
     }
 
+    // the value recordProbe(info, ...) was called with, unlike getInfo() which recomputes a fresh one
+    Object getCachedInfo() {
+        return info;
+    }
+
     protected abstract void initialize();
 
     public final void check(WsClient wsClient) {
         log.debug("[{}] Checking", info);
+        boolean success = false;
         try {
-            int expectedUpdatesCount = isCfMonitoringEnabled() ? 2 : 1;
-            wsClient.registerWaitForUpdates(expectedUpdatesCount);
-
-            String testValue = UUID.randomUUID().toString();
-            String testPayload = createTestPayload(testValue);
-            try {
-                initClient();
-                stopWatch.start();
-                sendTestPayload(testPayload);
-                reporter.reportLatency(Latencies.request(getKey()), stopWatch.getTime());
-                log.trace("[{}] Sent test payload ({})", info, testPayload);
-            } catch (Throwable e) {
-                throw new ServiceFailureException(info, e);
-            }
-
-            log.trace("[{}] Waiting for WS update", info);
-            checkWsUpdates(wsClient, testValue);
-
+            doCheck(wsClient);
             reporter.serviceIsOk(info);
+            // a successful end-to-end check implies the transport accepted messages fine too - clear
+            // any "(accepted)" failure state left over from an earlier login/WS outage, or it would
+            // never recover on its own (checkAccepted() only runs again during the next outage) and
+            // its incident would stay open forever. Mirrors clearAcceptedMetricsFor() on the
+            // metrics side.
+            reporter.serviceIsOk(acceptedProbeKey());
+            success = true;
         } catch (ServiceFailureException e) {
             reporter.serviceFailure(e.getServiceKey(), e);
         } catch (Exception e) {
             reporter.serviceFailure(info, e);
+        } finally {
+            probeMetricsRecorder.recordProbe(info, success);
         }
 
         associates.values().forEach(healthChecker -> {
@@ -100,35 +104,125 @@ public abstract class BaseHealthChecker<C extends MonitoringConfig, T extends Mo
         });
     }
 
+    // the actual probe sequence, factored out of check() so that method is just the alerting/metrics
+    // envelope (try/catch/finally + associates fan-out) around this "how a check actually runs" body.
+    // Each stage clears its own action-duration gauge on failure before rethrowing, so a partial
+    // attempt never leaves a stale duration behind for an action that didn't actually complete.
+    private void doCheck(WsClient wsClient) {
+        String testValue;
+        String testPayload;
+        try {
+            int expectedUpdatesCount = isCfMonitoringEnabled() ? 2 : 1;
+            wsClient.registerWaitForUpdates(expectedUpdatesCount);
+            testValue = UUID.randomUUID().toString();
+            testPayload = createTestPayload(testValue, TEST_TELEMETRY_KEY);
+        } catch (Throwable e) {
+            clearOwnActionDurations(); // neither action recorded this cycle yet
+            throw new ServiceFailureException(info, e);
+        }
+        try {
+            initClient();
+            stopWatch.start();
+            sendTestPayload(testPayload);
+            long requestLatencyNanos = stopWatch.getTime();
+            reporter.reportLatency(Latencies.request(getKey()), requestLatencyNanos);
+            probeMetricsRecorder.recordActionDuration(info, ProbeMetricsRecorder.ACTION_REQUEST, requestLatencyNanos);
+            log.trace("[{}] Sent test payload ({})", info, testPayload);
+        } catch (Throwable e) {
+            clearOwnActionDurations();
+            throw new ServiceFailureException(info, e);
+        }
+
+        log.trace("[{}] Waiting for WS update", info);
+        checkWsUpdates(wsClient, testValue);
+    }
+
+    private Object acceptedProbeKey() {
+        return new AcceptedProbeKey(info);
+    }
+
+    private void clearOwnActionDurations() {
+        probeMetricsRecorder.removeActionDuration(info, ProbeMetricsRecorder.ACTION_REQUEST);
+        probeMetricsRecorder.removeActionDuration(info, ProbeMetricsRecorder.ACTION_WS_UPDATE);
+    }
+
+    // separate identity from info, so this fallback's alerts/recoveries never touch check()'s own
+    // failuresCounter (and vice versa) - mirrors the metrics side's separate kind="accepted" tag
+    private record AcceptedProbeKey(Object delegate) implements ShortNameProvider {
+        @Override
+        public String getShortName() {
+            String base = delegate instanceof ShortNameProvider provider ? provider.getShortName() : String.valueOf(delegate);
+            return base + " (accepted)";
+        }
+
+        @Override
+        public String toString() {
+            return delegate + " (accepted)";
+        }
+    }
+
+    // unlike check(), doesn't wait for WS/core confirmation - not final since LwM2M overrides it as
+    // a no-op. Reports under AcceptedProbeKey rather than info, so this weaker signal can alert and
+    // recover on its own without ever resolving (or reopening) the real end-to-end check's incident.
+    protected void checkAccepted() {
+        Object acceptedKey = acceptedProbeKey();
+        boolean success;
+        try {
+            initClient();
+            sendAcceptedTestPayload(createTestPayload(UUID.randomUUID().toString(), ACCEPTED_TEST_TELEMETRY_KEY));
+            success = true;
+        } catch (Throwable e) {
+            reporter.serviceFailure(acceptedKey, e);
+            success = false;
+        }
+        if (success) {
+            reporter.serviceIsOk(acceptedKey);
+        }
+        probeMetricsRecorder.recordAcceptedProbe(info, success);
+        associates.values().forEach(healthChecker -> healthChecker.checkAccepted());
+    }
+
     private void checkWsUpdates(WsClient wsClient, String testValue) {
-        stopWatch.start();
-        wsClient.waitForUpdates(resultCheckTimeoutMs);
-        log.trace("[{}] Waited for WS update. Last WS msgs: {}", info, wsClient.lastMsgs);
-        Map<String, String> latest = wsClient.getLatest(target.getDeviceId());
-        if (latest.isEmpty()) {
-            throw new ServiceFailureException(info, "No WS update arrived within " + resultCheckTimeoutMs + " ms");
-        }
-        String actualValue = latest.get(TEST_TELEMETRY_KEY);
-        if (!testValue.equals(actualValue)) {
-            throw new ServiceFailureException(info, "Was expecting value " + testValue + " but got " + actualValue);
-        }
-        if (isCfMonitoringEnabled()) {
-            String cfTestValue = testValue + "-cf";
-            String actualCfValue = latest.get(TEST_CF_TELEMETRY_KEY);
-            if (actualCfValue == null) {
-                throw new ServiceFailureException(info, "No calculated field value arrived");
-            } else if (!cfTestValue.equals(actualCfValue)) {
-                throw new ServiceFailureException(info, "Was expecting calculated field value " + cfTestValue + " but got " + actualCfValue);
+        try {
+            stopWatch.start();
+            wsClient.waitForUpdates(resultCheckTimeoutMs);
+            log.trace("[{}] Waited for WS update. Last WS msgs: {}", info, wsClient.lastMsgs);
+            Map<String, String> latest = wsClient.getLatest(target.getDeviceId());
+            if (latest.isEmpty()) {
+                throw new ServiceFailureException(info, "No WS update arrived within " + resultCheckTimeoutMs + " ms");
             }
+            String actualValue = latest.get(TEST_TELEMETRY_KEY);
+            if (!testValue.equals(actualValue)) {
+                throw new ServiceFailureException(info, "Was expecting value " + testValue + " but got " + actualValue);
+            }
+            if (isCfMonitoringEnabled()) {
+                String cfTestValue = testValue + "-cf";
+                String actualCfValue = latest.get(TEST_CF_TELEMETRY_KEY);
+                if (actualCfValue == null) {
+                    throw new ServiceFailureException(info, "No calculated field value arrived");
+                } else if (!cfTestValue.equals(actualCfValue)) {
+                    throw new ServiceFailureException(info, "Was expecting calculated field value " + cfTestValue + " but got " + actualCfValue);
+                }
+            }
+            long wsUpdateLatencyNanos = stopWatch.getTime();
+            reporter.reportLatency(Latencies.wsUpdate(getKey()), wsUpdateLatencyNanos);
+            probeMetricsRecorder.recordActionDuration(info, ProbeMetricsRecorder.ACTION_WS_UPDATE, wsUpdateLatencyNanos);
+        } catch (Throwable e) {
+            probeMetricsRecorder.removeActionDuration(info, ProbeMetricsRecorder.ACTION_WS_UPDATE);
+            throw e;
         }
-        reporter.reportLatency(Latencies.wsUpdate(getKey()), stopWatch.getTime());
     }
 
     protected abstract void initClient() throws Exception;
 
-    protected abstract String createTestPayload(String testValue);
+    protected abstract String createTestPayload(String testValue, String telemetryKey);
 
     protected abstract void sendTestPayload(String payload) throws Exception;
+
+    // overridable so a transport whose regular send doesn't guarantee delivery confirmation (e.g. MQTT at QoS 0) can force one here
+    protected void sendAcceptedTestPayload(String payload) throws Exception {
+        sendTestPayload(payload);
+    }
 
     @PreDestroy
     protected abstract void destroyClient() throws Exception;

@@ -1,0 +1,196 @@
+/**
+ * Copyright © 2016-2026 The Thingsboard Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.thingsboard.monitoring.metrics;
+
+import lombok.extern.slf4j.Slf4j;
+import org.thingsboard.monitoring.config.integration.IntegrationType;
+import org.thingsboard.monitoring.config.transport.TransportType;
+
+import java.net.URI;
+import java.util.Map;
+import java.util.Optional;
+import java.util.function.Function;
+
+// Derives the "check"/"endpoint" labels used to tag probe metrics.
+@Slf4j
+public final class ProbeLabelResolver {
+
+    public static final String LOGIN_PATH = "/api/auth/login";
+
+    private static final Map<String, Integer> DEFAULT_PORTS = Map.of(
+            "mqtt", 1883, "mqtts", 8883,
+            "coap", 5683, "coaps", 5684,
+            "http", 80, "https", 443,
+            "lwm2m", 5685
+    );
+
+    private ProbeLabelResolver() {
+    }
+
+    public record ProbeLabels(String check, String endpoint) {
+    }
+
+    // returns empty (rather than logging) when the endpoint can't be resolved (missing scheme?) -
+    // this is a stateless utility, so warning-dedup across repeated calls for the same target is the
+    // caller's (ProbeMetricsRecorder's) responsibility, not this class's
+    public static Optional<ProbeLabels> resolveTransportLabels(TransportType type, String baseUrl) {
+        URI uri = parseUriOrNull(baseUrl);
+        if (uri == null) {
+            return Optional.empty();
+        }
+        String checkType = resolveCheckType(type, uri);
+        String endpoint = resolveEndpoint(uri, checkType);
+        if (endpoint == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new ProbeLabels(checkType, endpoint));
+    }
+
+    // "check" is IntegrationType.getCheckKey() (ihttp, icoap, imqtt) - matches
+    // IntegrationHealthChecker.getKey(), keeping it short while still avoiding a collision with the
+    // transport of the same protocol against the same domain (same endpoint label otherwise). Unlike
+    // the transport "check" label, this doesn't split into a secure variant (ihttps etc) - but the
+    // default *port* still has to account for the scheme, or a secure integration target with no
+    // explicit port gets labelled with a plaintext port it never contacted.
+    public static Optional<ProbeLabels> resolveIntegrationLabels(IntegrationType type, String baseUrl) {
+        URI uri = parseUriOrNull(baseUrl);
+        if (uri == null) {
+            return Optional.empty();
+        }
+        String checkType = type.getCheckKey();
+        String protocol = resolveSecureAwareProtocol(type.name().toLowerCase(), uri);
+        int defaultPort = DEFAULT_PORTS.getOrDefault(protocol, 0);
+        String endpoint = resolveHostPort(uri, defaultPort);
+        if (endpoint == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new ProbeLabels(checkType, endpoint));
+    }
+
+    public static String resolveLoginEndpoint(String restBaseUrl) {
+        return tryResolve("monitoring.rest.base_url", restBaseUrl, "login", endpoint -> endpoint + LOGIN_PATH);
+    }
+
+    public static String resolveWsEndpoint(String wsBaseUrl) {
+        return tryResolve("monitoring.ws.base_url", wsBaseUrl, "ws", Function.identity());
+    }
+
+    private static String tryResolve(String configKey, String baseUrl, String probeName,
+                                      Function<String, String> postProcess) {
+        try {
+            URI uri = URI.create(baseUrl);
+            boolean secureScheme = "https".equalsIgnoreCase(uri.getScheme()) || "wss".equalsIgnoreCase(uri.getScheme());
+            String hostPort = resolveHostPort(uri, secureScheme ? 443 : 80);
+            if (hostPort == null) {
+                // schemeless/opaque URL - just as much a misconfiguration as an unparseable one
+                warnUnresolvable(configKey, baseUrl, probeName, null);
+                return null;
+            }
+            return postProcess.apply(hostPort);
+        } catch (Exception e) {
+            // an invalid base URL must not fail app startup - caller treats null as "skip this probe"
+            warnUnresolvable(configKey, baseUrl, probeName, e);
+            return null;
+        }
+    }
+
+    // malformed or null baseUrl is treated the same as "unresolvable" by every caller here
+    private static URI parseUriOrNull(String baseUrl) {
+        try {
+            return URI.create(baseUrl);
+        } catch (IllegalArgumentException | NullPointerException e) {
+            return null;
+        }
+    }
+
+    private static void warnUnresolvable(String configKey, String baseUrl, String probeName, Exception cause) {
+        if (cause != null) {
+            log.warn("Failed to resolve endpoint from {} [{}] - \"{}\" probe telemetry will not be recorded",
+                    configKey, baseUrl, probeName, cause);
+        } else {
+            log.warn("Failed to resolve endpoint from {} [{}] - \"{}\" probe telemetry will not be recorded",
+                    configKey, baseUrl, probeName);
+        }
+    }
+
+    private static String resolveCheckType(TransportType type, URI uri) {
+        if (type == TransportType.LWM2M) {
+            return "lwm2m";
+        }
+        return resolveSecureAwareProtocol(type.name().toLowerCase(), uri);
+    }
+
+    // shared by resolveCheckType (transport) and resolveIntegrationLabels (integration default port) -
+    // kept as one switch so a future scheme alias can't drift between the two callers
+    private static String resolveSecureAwareProtocol(String baseProtocol, URI uri) {
+        String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase();
+        return switch (baseProtocol) {
+            case "mqtt" -> "ssl".equals(scheme) ? "mqtts" : "mqtt";
+            case "coap" -> "coaps".equals(scheme) ? "coaps" : "coap";
+            case "http" -> "https".equals(scheme) ? "https" : "http";
+            default -> baseProtocol;
+        };
+    }
+
+    private static String resolveEndpoint(URI uri, String checkType) {
+        return resolveHostPort(uri, DEFAULT_PORTS.get(checkType));
+    }
+
+    public record HostPort(String host, int port) {
+    }
+
+    // URI.getHost()/getPort() return null/-1 for authorities Java doesn't consider valid hostnames
+    // (e.g. underscores in docker-compose service names, a common target naming convention) - fall
+    // back to parsing the authority component directly instead of silently losing the host. Exposed
+    // (not just resolveHostPort below) so callers needing HOST/PORT separately - e.g. provisioning an
+    // Integration's clientConfiguration - don't have to duplicate this fallback themselves.
+    public static HostPort resolveHost(URI uri, int defaultPort) {
+        String host = uri.getHost();
+        int port = uri.getPort();
+        if (host == null) {
+            String authority = uri.getAuthority();
+            if (authority == null) {
+                // schemeless URLs (e.g. "acme.example.com:1883") parse as opaque, with neither a host
+                // nor an authority at all - nothing to fall back to, so let the caller skip the probe
+                return null;
+            }
+            String hostPort = authority.contains("@") ? authority.substring(authority.lastIndexOf('@') + 1) : authority;
+            if (hostPort.indexOf(':') != hostPort.lastIndexOf(':')) {
+                // multiple colons = bare IPv6 literal, not host:port - don't mangle it by splitting
+                host = hostPort;
+            } else {
+                int colonIdx = hostPort.lastIndexOf(':');
+                if (colonIdx != -1) {
+                    host = hostPort.substring(0, colonIdx);
+                    try {
+                        port = Integer.parseInt(hostPort.substring(colonIdx + 1));
+                    } catch (NumberFormatException e) {
+                        port = -1;
+                    }
+                } else {
+                    host = hostPort;
+                }
+            }
+        }
+        return new HostPort(host, port != -1 ? port : defaultPort);
+    }
+
+    public static String resolveHostPort(URI uri, int defaultPort) {
+        HostPort hostPort = resolveHost(uri, defaultPort);
+        return hostPort == null ? null : hostPort.host() + ":" + hostPort.port();
+    }
+
+}

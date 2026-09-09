@@ -29,6 +29,7 @@ import org.thingsboard.monitoring.data.notification.InfoNotification;
 import org.thingsboard.monitoring.notification.NotificationService;
 import org.thingsboard.monitoring.service.BaseMonitoringService;
 import org.thingsboard.monitoring.service.MonitoringEntityService;
+import org.thingsboard.monitoring.service.PublicSharingService;
 import jakarta.annotation.PreDestroy;
 
 import java.util.List;
@@ -45,14 +46,22 @@ public class ThingsboardMonitoringApplication {
 
     private final List<BaseMonitoringService<?, ?>> monitoringServices;
     private final MonitoringEntityService entityService;
+    private final PublicSharingService publicSharingService;
     private final NotificationService notificationService;
 
     @Value("${monitoring.monitoring_rate_ms}")
     private int monitoringRateMs;
 
-    ScheduledExecutorService scheduler = ThingsBoardExecutors.newSingleThreadScheduledExecutor("monitoring");
+    private final ScheduledExecutorService scheduler = ThingsBoardExecutors.newSingleThreadScheduledExecutor("monitoring");
 
     public static void main(String[] args) {
+        // sun.net.httpserver.ServerConfig reads these once, on the JVM's first HttpServer use (the
+        // Prometheus scrape endpoint, if enabled) - must be set before that and before Spring itself
+        // starts, since Spring config isn't available yet at this point.
+        String timeoutS = System.getenv().getOrDefault("METRICS_PROMETHEUS_HTTP_TIMEOUT_S", "30");
+        System.setProperty("sun.net.httpserver.maxReqTime", timeoutS);
+        System.setProperty("sun.net.httpserver.maxRspTime", timeoutS);
+
         new SpringApplicationBuilder(ThingsboardMonitoringApplication.class)
                 .properties(Map.of("spring.config.name", "tb-monitoring"))
                 .run(args);
@@ -61,7 +70,7 @@ public class ThingsboardMonitoringApplication {
     @EventListener(ApplicationReadyEvent.class)
     public void startMonitoring() {
         entityService.checkEntities();
-        log.info("Starting monitoring for {}", entityService.isPe() ? "PE" : "CE");
+        log.info("Starting monitoring for {}", publicSharingService.isPe() ? "PE" : "CE");
         monitoringServices.forEach(BaseMonitoringService::init);
 
         for (int i = 0; i < monitoringServices.size(); i++) {

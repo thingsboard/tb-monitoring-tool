@@ -64,6 +64,18 @@ class IncidentManagerTest {
     }
 
     @Test
+    void firstAlertWithNoStructuredAffectedServicesStillOpensIncident() {
+        // regression test: an empty affectedServices list (e.g. a Notification that doesn't
+        // override getAffectedServices()) used to be treated the same as "everything recovered"
+        // and silently dropped instead of opening an incident.
+        manager.sendAlert("Generic incident message", List.of());
+
+        assertThat(transport.incidents).hasSize(1);
+        assertThat(transport.replies).hasSize(1);
+        assertThat(transport.replies.get(0).text()).isEqualTo("Generic incident message");
+    }
+
+    @Test
     void isolatedRecoveryWithoutActiveIncidentIsIgnored() {
         manager.sendAlert("Login is OK",
                 List.of(AffectedService.recovered("Login")));
@@ -127,6 +139,20 @@ class IncidentManagerTest {
                 .contains(":white_check_mark:")
                 .contains(":red_circle: WS Connect")
                 .contains(":large_green_circle: Login (1)");
+    }
+
+    @Test
+    void messagesIncludeConfiguredPrefixInBothOngoingAndResolvedText() {
+        // guards the appendPrefix() extraction shared by buildOngoingMessageText() and
+        // buildResolutionMessage() - both must keep applying the configured prefix identically
+        manager.sendAlert("CoAP failure", List.of(AffectedService.failing("CoAP", 1)));
+        manager.resolveIncident();
+
+        assertThat(transport.incidents.get(0)).contains("*tbqa*");
+        assertThat(transport.updates).last()
+                .extracting(RecordingTransport.Message::text)
+                .asString()
+                .contains("*tbqa*");
     }
 
     @Test

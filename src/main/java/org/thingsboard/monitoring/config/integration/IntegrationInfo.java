@@ -26,7 +26,7 @@ public class IntegrationInfo implements ShortNameProvider {
 
     @Override
     public String getShortName() {
-        return "i" + type.getName();
+        return type.getName() + " integration";
     }
 
     @Override

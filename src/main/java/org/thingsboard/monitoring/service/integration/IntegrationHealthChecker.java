@@ -18,15 +18,20 @@ package org.thingsboard.monitoring.service.integration;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.thingsboard.common.util.JacksonUtil;
 import org.thingsboard.monitoring.config.integration.IntegrationInfo;
 import org.thingsboard.monitoring.config.integration.IntegrationMonitoringConfig;
 import org.thingsboard.monitoring.config.integration.IntegrationMonitoringTarget;
 import org.thingsboard.monitoring.config.integration.IntegrationType;
 import org.thingsboard.monitoring.service.BaseHealthChecker;
+import org.thingsboard.monitoring.service.IntegrationEntityService;
 
 @Slf4j
 public abstract class IntegrationHealthChecker<C extends IntegrationMonitoringConfig> extends BaseHealthChecker<C, IntegrationMonitoringTarget> {
+
+    @Autowired
+    private IntegrationEntityService integrationEntityService;
 
     public IntegrationHealthChecker(C config, IntegrationMonitoringTarget target) {
         super(config, target);
@@ -34,14 +39,14 @@ public abstract class IntegrationHealthChecker<C extends IntegrationMonitoringCo
 
     @Override
     protected final void initialize() {
-        entityService.checkEntities(config, target);
+        integrationEntityService.checkEntities(config, target);
     }
 
     @Override
-    protected final String createTestPayload(String testValue) {
+    protected final String createTestPayload(String testValue, String telemetryKey) {
         ObjectNode payload = JacksonUtil.newObjectNode();
         payload.set("device", new TextNode(target.getDevice().getName()));
-        payload.set("telemetry", JacksonUtil.newObjectNode().set(TEST_TELEMETRY_KEY, new TextNode(testValue)));
+        payload.set("telemetry", JacksonUtil.newObjectNode().set(telemetryKey, new TextNode(testValue)));
         return payload.toString();
     }
 
@@ -50,6 +55,11 @@ public abstract class IntegrationHealthChecker<C extends IntegrationMonitoringCo
         return new IntegrationInfo(getIntegrationType(), target.getBaseUrl());
     }
 
+    // deliberately NOT getIntegrationType().getCheckKey() ("icoap" etc.) - this key feeds
+    // Latencies.request/wsUpdate() to build the ThingsBoard telemetry key an existing deployment's
+    // dashboard already plots latency history under (e.g. "coapIntegrationWsUpdateLatency", migrated
+    // from the ThingsBoard monorepo's monitoring module). getCheckKey() is only for the Prometheus
+    // "check" label, a namespace this PR introduces fresh with no such history to preserve.
     @Override
     protected final String getKey() {
         return getIntegrationType().name().toLowerCase() + "Integration";
@@ -57,6 +67,8 @@ public abstract class IntegrationHealthChecker<C extends IntegrationMonitoringCo
 
     protected abstract IntegrationType getIntegrationType();
 
+    // The integration device comes from integration/device.json and has no calculated field
+    // provisioned for it, unlike transport devices.
     @Override
     protected final boolean isCfMonitoringEnabled() {
         return false;

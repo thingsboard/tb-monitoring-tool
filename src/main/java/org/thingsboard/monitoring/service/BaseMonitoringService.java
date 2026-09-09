@@ -30,21 +30,23 @@ import org.thingsboard.monitoring.config.MonitoringTarget;
 import org.thingsboard.monitoring.data.Latencies;
 import org.thingsboard.monitoring.data.MonitoredServiceKey;
 import org.thingsboard.monitoring.data.ServiceFailureException;
+import org.thingsboard.monitoring.data.notification.ShortNameProvider;
+import org.thingsboard.monitoring.metrics.ProbeMetricsRecorder;
 import org.thingsboard.monitoring.util.TbStopWatch;
 import org.thingsboard.server.common.data.EntityType;
-import org.thingsboard.server.common.data.page.PageData;
 import org.thingsboard.server.common.data.query.EntityData;
 import org.thingsboard.server.common.data.query.EntityDataPageLink;
 import org.thingsboard.server.common.data.query.EntityDataQuery;
 import org.thingsboard.server.common.data.query.EntityDataSortOrder;
 import org.thingsboard.server.common.data.query.EntityKey;
 import org.thingsboard.server.common.data.query.EntityKeyType;
-import org.thingsboard.server.common.data.query.EntityTypeFilter;
+import org.thingsboard.server.common.data.query.EntityListFilter;
 import org.thingsboard.server.common.data.query.TsValue;
 
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.UnknownHostException;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -54,6 +56,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -76,6 +86,8 @@ public abstract class BaseMonitoringService<C extends MonitoringConfig<T>, T ext
     private TbStopWatch stopWatch;
     @Autowired
     private MonitoringReporter reporter;
+    @Autowired
+    private ProbeMetricsRecorder probeMetricsRecorder;
     @Autowired
     protected ApplicationContext applicationContext;
 
@@ -115,18 +127,34 @@ public abstract class BaseMonitoringService<C extends MonitoringConfig<T>, T ext
         if (healthCheckers.isEmpty()) {
             return;
         }
+        // how many healthCheckers completed check() this cycle - so an unexpected failure partway
+        // through the loop below only clears the ones not yet reached, not everyone's fresh data
+        int checkedCount = 0;
         try {
             log.info("Starting {}", getName());
+            probeMetricsRecorder.startCycle();
+            probeMetricsRecorder.recordHeartbeat();
 
             String accessToken;
+            boolean loginSuccess = false;
             try {
                 stopWatch.start();
                 accessToken = tbClient.logIn();
-                reporter.reportLatency(Latencies.LOG_IN, stopWatch.getTime());
+                long loginLatencyNanos = stopWatch.getTime();
+                reporter.reportLatency(Latencies.LOG_IN, loginLatencyNanos);
+                probeMetricsRecorder.recordActionDuration(MonitoredServiceKey.LOGIN, ProbeMetricsRecorder.ACTION_REQUEST, loginLatencyNanos);
                 reporter.serviceIsOk(MonitoredServiceKey.LOGIN);
+                loginSuccess = true;
             } catch (Exception e) {
                 reporter.serviceFailure(MonitoredServiceKey.LOGIN, e);
+                probeMetricsRecorder.removeActionDuration(MonitoredServiceKey.LOGIN, ProbeMetricsRecorder.ACTION_REQUEST);
+                // WS and transport checks never ran this cycle - clear their gauges instead of
+                // leaving last cycle's value stale, then fall back to the WS-independent signal
+                probeMetricsRecorder.removeProbe(MonitoredServiceKey.WS, ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE);
+                fallBackToAcceptedChecks();
                 return;
+            } finally {
+                probeMetricsRecorder.recordProbe(MonitoredServiceKey.LOGIN, loginSuccess);
             }
 
             WsClient wsClient;
@@ -135,6 +163,11 @@ public abstract class BaseMonitoringService<C extends MonitoringConfig<T>, T ext
                 reporter.serviceIsOk(MonitoredServiceKey.WS_CONNECT);
             } catch (Exception e) {
                 reporter.serviceFailure(MonitoredServiceKey.WS_CONNECT, e);
+                probeMetricsRecorder.removeActionDuration(MonitoredServiceKey.WS, ProbeMetricsRecorder.ACTION_CONNECT);
+                // subscribe never runs this cycle either - its last value is now stale too
+                probeMetricsRecorder.removeActionDuration(MonitoredServiceKey.WS, ProbeMetricsRecorder.ACTION_SUBSCRIBE);
+                probeMetricsRecorder.recordProbe(MonitoredServiceKey.WS, false);
+                fallBackToAcceptedChecks();
                 return;
             }
 
@@ -142,15 +175,22 @@ public abstract class BaseMonitoringService<C extends MonitoringConfig<T>, T ext
                 try {
                     stopWatch.start();
                     ws.subscribeForTelemetry(devices, getTestTelemetryKeys()).waitForReply();
-                    reporter.reportLatency(Latencies.WS_SUBSCRIBE, stopWatch.getTime());
+                    long subscribeLatencyNanos = stopWatch.getTime();
+                    reporter.reportLatency(Latencies.WS_SUBSCRIBE, subscribeLatencyNanos);
+                    probeMetricsRecorder.recordActionDuration(MonitoredServiceKey.WS, ProbeMetricsRecorder.ACTION_SUBSCRIBE, subscribeLatencyNanos);
                     reporter.serviceIsOk(MonitoredServiceKey.WS_SUBSCRIBE);
+                    probeMetricsRecorder.recordProbe(MonitoredServiceKey.WS, true);
                 } catch (Exception e) {
                     reporter.serviceFailure(MonitoredServiceKey.WS_SUBSCRIBE, e);
+                    probeMetricsRecorder.removeActionDuration(MonitoredServiceKey.WS, ProbeMetricsRecorder.ACTION_SUBSCRIBE);
+                    probeMetricsRecorder.recordProbe(MonitoredServiceKey.WS, false);
+                    fallBackToAcceptedChecks();
                     return;
                 }
 
                 for (BaseHealthChecker<C, T> healthChecker : healthCheckers) {
                     check(healthChecker, ws);
+                    checkedCount++;
                 }
             }
 
@@ -174,7 +214,13 @@ public abstract class BaseMonitoringService<C extends MonitoringConfig<T>, T ext
             log.debug("Finished {}", getName());
         } catch (ServiceFailureException e) {
             reporter.serviceFailure(e.getServiceKey(), e);
+            // clear only the healthCheckers this cycle didn't get to - the ones before checkedCount
+            // already have fresh data this cycle and must not be wiped
+            clearUncheckedProbeMetrics(checkedCount);
+            clearUncheckedAcceptedMetrics(checkedCount);
         } catch (Throwable error) {
+            clearUncheckedProbeMetrics(checkedCount);
+            clearUncheckedAcceptedMetrics(checkedCount);
             try {
                 reporter.serviceFailure(MonitoredServiceKey.GENERAL, error);
             } catch (Throwable reportError) {
@@ -185,71 +231,125 @@ public abstract class BaseMonitoringService<C extends MonitoringConfig<T>, T ext
 
     private void check(BaseHealthChecker<C, T> healthChecker, WsClient wsClient) throws Exception {
         healthChecker.check(wsClient);
+        clearAcceptedMetricsFor(healthChecker);
 
         T target = healthChecker.getTarget();
         if (target.isCheckDomainIps()) {
-            Set<String> associatedUrls = getAssociatedUrls(target.getBaseUrl());
-            Map<String, BaseHealthChecker<C, T>> associates = healthChecker.getAssociates();
-            Set<String> prevAssociatedUrls = new HashSet<>(associates.keySet());
+            // its own key, not GENERAL - GENERAL's serviceIsOk() still fires at the end of a cycle
+            // that reached this point, which would immediately flap a real, persistent DNS failure
+            // back to "recovered" even though it never actually cleared
+            Object reconciliationKey = new ReconciliationFailureKey(healthChecker.getCachedInfo());
+            try {
+                reconcileAssociates(healthChecker, target);
+                reporter.serviceIsOk(reconciliationKey);
+            } catch (Exception e) {
+                // check() above already recorded this cycle's data - a reconciliation failure
+                // must not look like a failure of the probe itself, so it's reported under its
+                // own key rather than the target's info
+                reporter.serviceFailure(reconciliationKey, e);
+                log.warn("Failed to reconcile associate IPs for {}", target.getBaseUrl(), e);
+            }
+        }
+    }
 
-            boolean changed = false;
-            for (String url : associatedUrls) {
-                if (!prevAssociatedUrls.contains(url)) {
-                    BaseHealthChecker<C, T> associate = initHealthChecker(createTarget(url), healthChecker.getConfig());
-                    associates.put(url, associate);
-                    changed = true;
-                }
+    private record ReconciliationFailureKey(Object delegate) implements ShortNameProvider {
+        @Override
+        public String getShortName() {
+            String base = delegate instanceof ShortNameProvider provider ? provider.getShortName() : String.valueOf(delegate);
+            return base + " (DNS)";
+        }
+
+        @Override
+        public String toString() {
+            return delegate + " (DNS)";
+        }
+    }
+
+    private void reconcileAssociates(BaseHealthChecker<C, T> healthChecker, T target) throws Exception {
+        Set<String> associatedUrls = getAssociatedUrls(target.getBaseUrl());
+        Map<String, BaseHealthChecker<C, T>> associates = healthChecker.getAssociates();
+        Set<String> prevAssociatedUrls = new HashSet<>(associates.keySet());
+
+        boolean changed = false;
+        for (String url : associatedUrls) {
+            if (!prevAssociatedUrls.contains(url)) {
+                BaseHealthChecker<C, T> associate = initHealthChecker(createTarget(url), healthChecker.getConfig());
+                associates.put(url, associate);
+                changed = true;
             }
-            for (String url : prevAssociatedUrls) {
-                if (!associatedUrls.contains(url)) {
-                    stopHealthChecker(healthChecker);
-                    associates.remove(url);
-                    changed = true;
-                }
+        }
+        for (String url : prevAssociatedUrls) {
+            if (!associatedUrls.contains(url)) {
+                BaseHealthChecker<C, T> retiredAssociate = associates.get(url);
+                // remove the metric before stopHealthChecker(), which can throw and skip everything after it
+                probeMetricsRecorder.removeProbe(retiredAssociate.getCachedInfo(), ProbeMetricsRecorder.Removal.PERMANENT);
+                probeMetricsRecorder.removeAcceptedProbe(retiredAssociate.getCachedInfo(), ProbeMetricsRecorder.Removal.PERMANENT);
+                stopHealthChecker(retiredAssociate);
+                associates.remove(url);
+                changed = true;
             }
-            if (changed) {
-                log.info("Updated IPs for {}: {} (old list: {})", target.getBaseUrl(), associatedUrls, prevAssociatedUrls);
-            }
+        }
+        if (changed) {
+            log.info("Updated IPs for {}: {} (old list: {})", target.getBaseUrl(), associatedUrls, prevAssociatedUrls);
         }
     }
 
     private void checkEdqs() {
-        EntityTypeFilter entityTypeFilter = new EntityTypeFilter();
-        entityTypeFilter.setEntityType(EntityType.DEVICE);
-        EntityDataPageLink pageLink = new EntityDataPageLink(100, 0, null, new EntityDataSortOrder(new EntityKey(EntityKeyType.ENTITY_FIELD, "name")));
-        EntityDataQuery entityDataQuery = new EntityDataQuery(entityTypeFilter, pageLink,
+        if (devices.isEmpty()) {
+            return;
+        }
+        // Scoped to exactly the devices this instance monitors, rather than an EntityTypeFilter over
+        // every device in the tenant - on a tenant not dedicated to monitoring, a type-wide query
+        // would mean a full (and possibly paginated) scan just to confirm a handful of devices exist.
+        EntityListFilter entityListFilter = new EntityListFilter();
+        entityListFilter.setEntityType(EntityType.DEVICE);
+        entityListFilter.setEntityList(devices.stream().map(UUID::toString).toList());
+        EntityDataPageLink pageLink = new EntityDataPageLink(devices.size(), 0, null, new EntityDataSortOrder(new EntityKey(EntityKeyType.ENTITY_FIELD, "name")));
+        EntityDataQuery entityDataQuery = new EntityDataQuery(entityListFilter, pageLink,
                 List.of(new EntityKey(EntityKeyType.ENTITY_FIELD, "name"), new EntityKey(EntityKeyType.ENTITY_FIELD, "type")),
-                List.of(new EntityKey(EntityKeyType.TIME_SERIES, "testData")),
+                List.of(new EntityKey(EntityKeyType.TIME_SERIES, TEST_TELEMETRY_KEY)),
                 Collections.emptyList());
+        List<EntityData> data = tbClient.findEntityDataByQuery(entityDataQuery).getData();
 
-        PageData<EntityData> result = tbClient.findEntityDataByQuery(entityDataQuery);
-        Set<UUID> devices = result.getData().stream()
+        Set<UUID> foundDevices = data.stream()
                 .map(entityData -> entityData.getEntityId().getId())
                 .collect(Collectors.toSet());
-        Set<UUID> missing = Sets.difference(new HashSet<>(this.devices), devices);
+        Set<UUID> missing = Sets.difference(new HashSet<>(devices), foundDevices);
         if (!missing.isEmpty()) {
             throw new ServiceFailureException(MonitoredServiceKey.EDQS, "Missing devices in the response: " + missing);
         }
 
-        result.getData().stream()
-                .filter(entityData -> this.devices.contains(entityData.getEntityId().getId()))
-                .forEach(entityData -> {
-                    Map<String, TsValue> values = new HashMap<>(entityData.getLatest().get(EntityKeyType.ENTITY_FIELD));
-                    values.putAll(entityData.getLatest().get(EntityKeyType.TIME_SERIES));
+        data.forEach(entityData -> {
+            Map<String, TsValue> values = new HashMap<>(entityData.getLatest().get(EntityKeyType.ENTITY_FIELD));
+            values.putAll(entityData.getLatest().get(EntityKeyType.TIME_SERIES));
 
-                    Stream.of("name", "type", "testData").forEach(key -> {
-                        TsValue value = values.get(key);
-                        if (value == null || StringUtils.isBlank(value.getValue())) {
-                            throw new ServiceFailureException(MonitoredServiceKey.EDQS, "Missing " + key + " for device " + entityData.getEntityId());
-                        }
-                    });
-                });
+            Stream.of("name", "type", TEST_TELEMETRY_KEY).forEach(key -> {
+                TsValue value = values.get(key);
+                if (value == null || StringUtils.isBlank(value.getValue())) {
+                    throw new ServiceFailureException(MonitoredServiceKey.EDQS, "Missing " + key + " for device " + entityData.getEntityId());
+                }
+            });
+        });
     }
+
+    @Value("${monitoring.dns_resolution_timeout_ms}")
+    private long dnsResolutionTimeoutMs;
+
+    // InetAddress.getAllByName() isn't interruptible, so a hung resolver leaves its thread blocked
+    // forever even after the timeout below gives up on it. A dedicated pool keeps that blast radius
+    // local to DNS lookups instead of pinning threads in the shared ForkJoinPool.commonPool(), which
+    // every other unrelated CompletableFuture in the JVM (including this app's own) also draws from.
+    private static final ExecutorService DNS_RESOLUTION_EXECUTOR = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "dns-resolution");
+        t.setDaemon(true);
+        return t;
+    });
 
     @SneakyThrows
     private Set<String> getAssociatedUrls(String baseUrl) {
         URI url = new URI(baseUrl);
-        return Arrays.stream(InetAddress.getAllByName(url.getHost()))
+        InetAddress[] addresses = resolveWithTimeout(url.getHost(), dnsResolutionTimeoutMs);
+        return Arrays.stream(addresses)
                 .map(InetAddress::getHostAddress)
                 .map(ip -> {
                     try {
@@ -261,8 +361,68 @@ public abstract class BaseMonitoringService<C extends MonitoringConfig<T>, T ext
                 .collect(Collectors.toSet());
     }
 
+    static InetAddress[] resolveWithTimeout(String host, long timeoutMs) {
+        return resolveWithTimeout(host, timeoutMs, () -> resolveHost(host));
+    }
+
+    // resolver is a separate parameter (rather than always resolveHost(host)) so the timeout branch
+    // itself is directly testable with a short timeout against a deliberately slow supplier, instead
+    // of waiting on a real DNS hang
+    @SneakyThrows
+    static InetAddress[] resolveWithTimeout(String host, long timeoutMs, Supplier<InetAddress[]> resolver) {
+        try {
+            return CompletableFuture.supplyAsync(resolver, DNS_RESOLUTION_EXECUTOR)
+                    .get(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            throw new ServiceFailureException(MonitoredServiceKey.GENERAL,
+                    "DNS resolution for " + host + " timed out after " + timeoutMs + " ms");
+        } catch (ExecutionException e) {
+            throw e.getCause();
+        }
+    }
+
+    private static InetAddress[] resolveHost(String host) {
+        try {
+            return InetAddress.getAllByName(host);
+        } catch (UnknownHostException e) {
+            throw new CompletionException(e);
+        }
+    }
+
     private List<String> getTestTelemetryKeys() {
         return checkCalculatedFields ? List.of(TEST_TELEMETRY_KEY, TEST_CF_TELEMETRY_KEY) : List.of(TEST_TELEMETRY_KEY);
+    }
+
+    // shared by the login/WS-connect/WS-subscribe failure branches: none of the healthCheckers ran
+    // this cycle, so their regular probe gauges go stale and the WS-independent accepted fallback
+    // takes over instead (covers both transport and integration health checkers - this method runs
+    // for either subclass, not just TransportsMonitoringService)
+    private void fallBackToAcceptedChecks() {
+        clearUncheckedProbeMetrics(0);
+        checkAllAccepted();
+    }
+
+    private void clearUncheckedProbeMetrics(int fromIndex) {
+        healthCheckers.subList(fromIndex, healthCheckers.size()).forEach(this::clearProbeMetricsFor);
+    }
+
+    private void clearProbeMetricsFor(BaseHealthChecker<C, T> healthChecker) {
+        probeMetricsRecorder.removeProbe(healthChecker.getCachedInfo(), ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE);
+        healthChecker.getAssociates().values().forEach(this::clearProbeMetricsFor);
+    }
+
+    private void clearUncheckedAcceptedMetrics(int fromIndex) {
+        healthCheckers.subList(fromIndex, healthCheckers.size()).forEach(this::clearAcceptedMetricsFor);
+    }
+
+    private void clearAcceptedMetricsFor(BaseHealthChecker<C, T> healthChecker) {
+        probeMetricsRecorder.removeAcceptedProbe(healthChecker.getCachedInfo(), ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE);
+        healthChecker.getAssociates().values().forEach(this::clearAcceptedMetricsFor);
+    }
+
+    // always runs regardless of OTLP/Prometheus export; deliberately serial (see freshThisCycle)
+    private void checkAllAccepted() {
+        healthCheckers.forEach(healthChecker -> healthChecker.checkAccepted());
     }
 
     private void stopHealthChecker(BaseHealthChecker<C, T> healthChecker) throws Exception {

@@ -15,17 +15,23 @@
  */
 package org.thingsboard.monitoring.config.integration;
 
-import lombok.Getter;
-import lombok.Setter;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+import org.apache.commons.lang3.RandomStringUtils;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
+import org.thingsboard.monitoring.metrics.ProbeLabelResolver;
+
+import java.net.URI;
+import java.util.Map;
+import java.util.Objects;
 
 @Component
 @ConditionalOnProperty(name = "monitoring.integrations.mqtt.enabled", havingValue = "true")
 @ConfigurationProperties(prefix = "monitoring.integrations.mqtt")
-@Getter
-@Setter
+@Data
+@EqualsAndHashCode(callSuper = true)
 public class MqttIntegrationMonitoringConfig extends IntegrationMonitoringConfig {
 
     // Credentials for the *integration's own outbound* connection to the broker at target.baseUrl -
@@ -35,6 +41,28 @@ public class MqttIntegrationMonitoringConfig extends IntegrationMonitoringConfig
     @Override
     public IntegrationType getIntegrationType() {
         return IntegrationType.MQTT;
+    }
+
+    @Override
+    public Map<String, String> buildTemplateParams(IntegrationMonitoringTarget target, String routingKey) {
+        URI uri = URI.create(target.getBaseUrl());
+        boolean ssl = "ssl".equalsIgnoreCase(uri.getScheme());
+        ProbeLabelResolver.HostPort hostPort = ProbeLabelResolver.resolveHost(uri, ssl ? 8883 : 1883);
+        if (hostPort == null) {
+            throw new IllegalArgumentException("Invalid MQTT base_url '" + target.getBaseUrl() +
+                    "' - expected a scheme, e.g. tcp://" + target.getBaseUrl());
+        }
+        return Map.of(
+                "HOST", hostPort.host(),
+                "PORT", String.valueOf(hostPort.port()),
+                // MqttUtils.connect() (this tool's own probe client) already switches to TLS for an
+                // ssl:// base_url via Paho's own scheme handling - the *provisioned* Integration needs
+                // telling separately, or it ends up trying plaintext against a TLS-only port.
+                "SSL", String.valueOf(ssl),
+                "ROUTING_KEY", routingKey,
+                "CLIENT_ID_SUFFIX", RandomStringUtils.secure().nextNumeric(6),
+                "USERNAME", Objects.requireNonNullElse(username, "")
+        );
     }
 
 }
