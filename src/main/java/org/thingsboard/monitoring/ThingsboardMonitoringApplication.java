@@ -24,7 +24,6 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.context.event.ContextClosedEvent;
 import org.springframework.scheduling.annotation.EnableScheduling;
-import org.thingsboard.common.util.ThingsBoardExecutors;
 import org.thingsboard.monitoring.data.notification.InfoNotification;
 import org.thingsboard.monitoring.notification.NotificationService;
 import org.thingsboard.monitoring.service.BaseMonitoringService;
@@ -52,7 +51,7 @@ public class ThingsboardMonitoringApplication {
     @Value("${monitoring.monitoring_rate_ms}")
     private int monitoringRateMs;
 
-    private final ScheduledExecutorService scheduler = ThingsBoardExecutors.newSingleThreadScheduledExecutor("monitoring");
+    private final ScheduledExecutorService scheduler;
 
     public static void main(String[] args) {
         // sun.net.httpserver.ServerConfig reads these once, on the JVM's first HttpServer use (the
@@ -76,8 +75,8 @@ public class ThingsboardMonitoringApplication {
         for (int i = 0; i < monitoringServices.size(); i++) {
             int initialDelay = (monitoringRateMs / monitoringServices.size()) * i;
             BaseMonitoringService<?, ?> service = monitoringServices.get(i);
-            log.info("Scheduling initialDelay {}, fixedDelay {} for monitoring '{}' ", initialDelay, monitoringRateMs, service.getClass().getSimpleName());
-            scheduler.scheduleWithFixedDelay(service::runChecks, initialDelay, monitoringRateMs, TimeUnit.MILLISECONDS);
+            log.info("Scheduling initial delay {} for monitoring '{}' ", initialDelay, service.getClass().getSimpleName());
+            scheduler.schedule(service::runChecks, initialDelay, TimeUnit.MILLISECONDS);
         }
 
         String publicDashboardUrl = entityService.getDashboardPublicLink();
@@ -99,7 +98,10 @@ public class ThingsboardMonitoringApplication {
 
     @PreDestroy
     public void shutdownScheduler() {
-        scheduler.shutdown();
+        // shutdownNow(), not shutdown(): a pending scheduled cycle (up to monitoring_rate_ms out)
+        // firing mid-teardown would partially run against a half-shutdown app and both delay
+        // shutdown and report a bogus failure alert when its own scheduling call gets rejected
+        scheduler.shutdownNow();
     }
 
 }

@@ -274,6 +274,26 @@ public class BaseHealthCheckerProbeMetricsTest {
     }
 
     @Test
+    public void check_neverChecksAssociates() {
+        // regression test: check() must not fan out to associates anymore - BaseMonitoringService's
+        // flattenHealthCheckers() now schedules every associate as its own separate chain entry, so
+        // this fan-out would double-probe (and still burst) each one
+        StubHealthChecker associate = new StubHealthChecker(new StubConfig(), new StubTarget());
+        ReflectionTestUtils.setField(associate, "reporter", reporter);
+        ReflectionTestUtils.setField(associate, "probeMetricsRecorder", probeMetricsRecorder);
+        ReflectionTestUtils.invokeMethod(associate, "init");
+        checker.getAssociates().put("associate-url", associate);
+
+        when(wsClient.waitForUpdates(100L)).thenReturn(null);
+        when(wsClient.getLatest(any())).thenAnswer(invocation ->
+                Map.of(BaseHealthChecker.TEST_TELEMETRY_KEY, StubHealthChecker.LAST_TEST_VALUE.get()));
+
+        checker.check(wsClient);
+
+        verify(probeMetricsRecorder, times(1)).recordProbe(eq(INFO), eq(true));
+    }
+
+    @Test
     public void checkAccepted_alsoChecksAssociates() {
         StubHealthChecker associate = new StubHealthChecker(new StubConfig(), new StubTarget());
         ReflectionTestUtils.setField(associate, "reporter", reporter);

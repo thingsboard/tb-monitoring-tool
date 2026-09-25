@@ -26,6 +26,13 @@ import io.micrometer.registry.otlp.OtlpConfig;
 import io.micrometer.registry.otlp.OtlpHttpMetricsSender;
 import io.micrometer.registry.otlp.OtlpMeterRegistry;
 import io.micrometer.registry.otlp.OtlpMetricsSender;
+import io.opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest;
+import io.opentelemetry.proto.common.v1.KeyValue;
+import io.opentelemetry.proto.metrics.v1.Gauge;
+import io.opentelemetry.proto.metrics.v1.Metric;
+import io.opentelemetry.proto.metrics.v1.NumberDataPoint;
+import io.opentelemetry.proto.metrics.v1.ResourceMetrics;
+import io.opentelemetry.proto.metrics.v1.ScopeMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -38,8 +45,13 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -102,11 +114,65 @@ public class ProbeMetricsRegistryConfig {
                 return attributes;
             }
         };
-        OtlpMetricsSender sender = new OtlpHttpMetricsSender(new HttpUrlConnectionSender());
+        OtlpMetricsSender sender = dedupingSender(new OtlpHttpMetricsSender(new HttpUrlConnectionSender()));
         if (alertingEnabled) {
             sender = withAlerting(sender, reporter);
         }
         return OtlpMeterRegistry.builder(otlpConfig).clock(Clock.SYSTEM).metricsSender(sender).build();
+    }
+
+    // OtlpMeterRegistry re-exports every gauge on every step_ms tick regardless of change - strips
+    // data points unchanged since the last successful send, but still always calls the delegate so
+    // withAlerting's OTLP-pipe health check keeps testing connectivity even when nothing changed.
+    private static OtlpMetricsSender dedupingSender(OtlpMetricsSender delegate) {
+        Map<List<String>, Double> lastSentValues = new ConcurrentHashMap<>();
+        return request -> {
+            ExportMetricsServiceRequest original = ExportMetricsServiceRequest.parseFrom(request.getMetricsData());
+            Map<List<String>, Double> pending = new LinkedHashMap<>();
+            ExportMetricsServiceRequest.Builder filtered = ExportMetricsServiceRequest.newBuilder();
+            for (ResourceMetrics rm : original.getResourceMetricsList()) {
+                ResourceMetrics.Builder rmBuilder = rm.toBuilder().clearScopeMetrics();
+                for (ScopeMetrics sm : rm.getScopeMetricsList()) {
+                    ScopeMetrics.Builder smBuilder = sm.toBuilder().clearMetrics();
+                    for (Metric metric : sm.getMetricsList()) {
+                        if (!metric.hasGauge()) {
+                            smBuilder.addMetrics(metric); // this app only emits gauges, but don't silently drop other types
+                            continue;
+                        }
+                        List<NumberDataPoint> changed = new ArrayList<>();
+                        for (NumberDataPoint point : metric.getGauge().getDataPointsList()) {
+                            List<String> key = dataPointKey(metric.getName(), point);
+                            double value = point.getAsDouble();
+                            if (!Double.valueOf(value).equals(lastSentValues.get(key))) {
+                                changed.add(point);
+                                pending.put(key, value);
+                            }
+                        }
+                        if (!changed.isEmpty()) {
+                            smBuilder.addMetrics(metric.toBuilder().setGauge(Gauge.newBuilder().addAllDataPoints(changed)));
+                        }
+                    }
+                    rmBuilder.addScopeMetrics(smBuilder);
+                }
+                filtered.addResourceMetrics(rmBuilder);
+            }
+            delegate.send(OtlpMetricsSender.Request.builder(filtered.build().toByteArray())
+                    .address(request.getAddress())
+                    .headers(request.getHeaders())
+                    .build());
+            // only recorded once the send above returned without throwing - a failed push must not be
+            // remembered as delivered, or the value would never be retried on a later tick
+            lastSentValues.putAll(pending);
+        };
+    }
+
+    private static List<String> dataPointKey(String metricName, NumberDataPoint point) {
+        List<String> key = new ArrayList<>();
+        key.add(metricName);
+        point.getAttributesList().stream()
+                .sorted(Comparator.comparing(KeyValue::getKey))
+                .forEach(kv -> key.add(kv.getKey() + "=" + kv.getValue().getStringValue()));
+        return key;
     }
 
     // alerts on real OTLP push failures via Slack/incident, not as a probe metric - a broken

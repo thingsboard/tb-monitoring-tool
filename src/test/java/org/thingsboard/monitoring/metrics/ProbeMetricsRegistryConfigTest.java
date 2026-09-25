@@ -20,6 +20,8 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.composite.CompositeMeterRegistry;
 import io.micrometer.registry.otlp.OtlpMeterRegistry;
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
+import io.opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest;
+import io.opentelemetry.proto.metrics.v1.Metric;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -32,6 +34,9 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -254,6 +259,93 @@ public class ProbeMetricsRegistryConfigTest {
         ReflectionTestUtils.invokeMethod(otlpRegistry, "publish"); // now succeeds
 
         verify(reporter).serviceIsOk(MonitoredServiceKey.OTLP_EXPORT);
+    }
+
+    private static int totalGaugeDataPoints(ExportMetricsServiceRequest request) {
+        return request.getResourceMetricsList().stream()
+                .flatMap(rm -> rm.getScopeMetricsList().stream())
+                .flatMap(sm -> sm.getMetricsList().stream())
+                .filter(Metric::hasGauge)
+                .mapToInt(m -> m.getGauge().getDataPointsCount())
+                .sum();
+    }
+
+    private HttpServer startFakeCollector(List<ExportMetricsServiceRequest> received, int port) throws IOException {
+        HttpServer collector = HttpServer.create(new InetSocketAddress(port), 0);
+        collector.createContext("/v1/metrics", exchange -> {
+            received.add(ExportMetricsServiceRequest.parseFrom(exchange.getRequestBody().readAllBytes()));
+            exchange.sendResponseHeaders(200, -1);
+            exchange.close();
+        });
+        collector.start();
+        return collector;
+    }
+
+    @Test
+    public void unchangedGaugeValue_isNotResentOnNextPublish() throws Exception {
+        List<ExportMetricsServiceRequest> received = new CopyOnWriteArrayList<>();
+        fakeCollector = startFakeCollector(received, 0);
+
+        boolean otlpAlertingEnabled = false;
+        boolean prometheusEnabled = false;
+        registry = probeMeterRegistry(true, "http://localhost:" + fakeCollector.getAddress().getPort() + "/v1/metrics",
+                60000, otlpAlertingEnabled, prometheusEnabled, 0, "0.0.0.0");
+        Object otlpRegistry = otlpRegistryOf(registry);
+        registry.gauge("test_probe_gauge", 1d);
+
+        ReflectionTestUtils.invokeMethod(otlpRegistry, "publish"); // first push - value is new
+        ReflectionTestUtils.invokeMethod(otlpRegistry, "publish"); // second push - unchanged, should be filtered out
+
+        assertThat(received).hasSize(2); // the pipe is still exercised both times, just with an empty second payload
+        assertThat(totalGaugeDataPoints(received.get(0))).isEqualTo(1);
+        assertThat(totalGaugeDataPoints(received.get(1))).isEqualTo(0);
+    }
+
+    @Test
+    public void changedGaugeValue_isResentOnNextPublish() throws Exception {
+        List<ExportMetricsServiceRequest> received = new CopyOnWriteArrayList<>();
+        fakeCollector = startFakeCollector(received, 0);
+
+        boolean otlpAlertingEnabled = false;
+        boolean prometheusEnabled = false;
+        registry = probeMeterRegistry(true, "http://localhost:" + fakeCollector.getAddress().getPort() + "/v1/metrics",
+                60000, otlpAlertingEnabled, prometheusEnabled, 0, "0.0.0.0");
+        Object otlpRegistry = otlpRegistryOf(registry);
+        AtomicReference<Double> value = new AtomicReference<>(1d);
+        registry.gauge("test_probe_gauge", value, AtomicReference::get);
+
+        ReflectionTestUtils.invokeMethod(otlpRegistry, "publish");
+        value.set(0d);
+        ReflectionTestUtils.invokeMethod(otlpRegistry, "publish");
+
+        assertThat(received).hasSize(2);
+        assertThat(totalGaugeDataPoints(received.get(0))).isEqualTo(1);
+        assertThat(totalGaugeDataPoints(received.get(1))).isEqualTo(1);
+    }
+
+    @Test
+    public void pushFailure_valueNotMarkedSent_soNextSuccessfulPushStillIncludesIt() throws Exception {
+        // same pattern as otlpAlertingEnabled_pushSucceedsAfterAFailure_reportsServiceIsOk: nothing
+        // listening on the port yet, so the first publish fails before a collector ever exists
+        int port;
+        try (var probe = new java.net.ServerSocket(0)) {
+            port = probe.getLocalPort();
+        }
+        boolean otlpAlertingEnabled = false;
+        boolean prometheusEnabled = false;
+        registry = probeMeterRegistry(true, "http://localhost:" + port + "/v1/metrics", 60000,
+                otlpAlertingEnabled, prometheusEnabled, 0, "0.0.0.0");
+        Object otlpRegistry = otlpRegistryOf(registry);
+        registry.gauge("test_probe_gauge", 1d);
+
+        ReflectionTestUtils.invokeMethod(otlpRegistry, "publish"); // fails - value must not be marked as delivered
+
+        List<ExportMetricsServiceRequest> received = new CopyOnWriteArrayList<>();
+        fakeCollector = startFakeCollector(received, port);
+        ReflectionTestUtils.invokeMethod(otlpRegistry, "publish"); // now succeeds
+
+        assertThat(received).hasSize(1);
+        assertThat(totalGaugeDataPoints(received.get(0))).isEqualTo(1); // the never-delivered value, not silently dropped
     }
 
 }

@@ -72,8 +72,12 @@ public class ProbeMetricsRecorder {
     private final Set<ProbeKey> warnedUnresolvable = ConcurrentHashMap.newKeySet();
     // action gauges recorded per probe, so removeProbe can clean them up without knowing them upfront
     private final Map<Tags, Set<String>> actionsByBaseTags = new ConcurrentHashMap<>();
-    // tags with fresh data this cycle - protects a colliding sibling from wiping a just-recorded gauge;
-    // relies on runChecks() cycles never overlapping (single-threaded executor)
+    // tags with fresh data this cycle - protects a colliding sibling from wiping a just-recorded gauge.
+    // Best-effort, not a hard guarantee: probes are now spread across most of monitoring_rate_ms, so
+    // two services sharing this recorder can have their cycles interleave, and a later startCycle()
+    // can clear marks that an in-flight earlier cycle already set. Blast radius stays limited to the
+    // already-warned label-collision case (see warnIfLabelCollision) - not worth per-service scoping
+    // at this tool's scale.
     private final Set<Tags> freshThisCycle = ConcurrentHashMap.newKeySet();
 
     public ProbeMetricsRecorder(MeterRegistry meterRegistry,

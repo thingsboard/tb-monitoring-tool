@@ -19,7 +19,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
+import org.springframework.context.annotation.CommonAnnotationBeanPostProcessor;
+import org.springframework.context.support.GenericApplicationContext;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.thingsboard.monitoring.MonitoringSchedulerConfig;
+import org.thingsboard.monitoring.ThingsboardMonitoringApplication;
 import org.thingsboard.monitoring.client.TbClient;
 import org.thingsboard.monitoring.client.WsClient;
 import org.thingsboard.monitoring.client.WsClientFactory;
@@ -27,7 +31,9 @@ import org.thingsboard.monitoring.config.transport.TransportMonitoringConfig;
 import org.thingsboard.monitoring.config.transport.TransportMonitoringTarget;
 import org.thingsboard.monitoring.data.MonitoredServiceKey;
 import org.thingsboard.monitoring.data.ServiceFailureException;
+import org.thingsboard.monitoring.data.notification.HighLatencyNotification;
 import org.thingsboard.monitoring.metrics.ProbeMetricsRecorder;
+import org.thingsboard.monitoring.notification.NotificationService;
 import org.thingsboard.monitoring.util.TbStopWatch;
 import org.thingsboard.server.common.data.id.DeviceId;
 import org.thingsboard.server.common.data.page.PageData;
@@ -42,8 +48,11 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -52,6 +61,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -69,6 +80,8 @@ public class BaseMonitoringServiceProbeMetricsTest {
     private TestMonitoringService service;
     private WsClient wsClient;
     private BaseHealthChecker<TransportMonitoringConfig, TransportMonitoringTarget> healthChecker;
+    private Queue<Runnable> scheduledTasks;
+    private ScheduledExecutorService scheduler;
 
     @BeforeEach
     public void setUp() throws Exception {
@@ -86,6 +99,15 @@ public class BaseMonitoringServiceProbeMetricsTest {
         ReflectionTestUtils.setField(service, "probeMetricsRecorder", probeMetricsRecorder);
         ReflectionTestUtils.setField(service, "stopWatch", new TbStopWatch());
         ReflectionTestUtils.setField(service, "dnsResolutionTimeoutMs", 5000L);
+
+        scheduler = mock(ScheduledExecutorService.class);
+        scheduledTasks = new LinkedList<>();
+        doAnswer(inv -> {
+            scheduledTasks.add(inv.getArgument(0));
+            return null;
+        }).when(scheduler).schedule(any(Runnable.class), anyLong(), eq(TimeUnit.MILLISECONDS));
+        ReflectionTestUtils.setField(service, "scheduler", scheduler);
+        ReflectionTestUtils.setField(service, "monitoringRateMs", 60000);
 
         // one stub health checker so runChecks() doesn't short-circuit on the "healthCheckers.isEmpty()" guard;
         // its own check() outcome is irrelevant to this test (it's exercised in BaseHealthCheckerProbeMetricsTest).
@@ -121,11 +143,21 @@ public class BaseMonitoringServiceProbeMetricsTest {
         when(wsClient.waitForReply()).thenThrow(new IllegalStateException("no reply"));
     }
 
+    // runs runChecks(), then executes exactly expectedProbeCount scheduled probe steps in order -
+    // leaving the final "schedule next cycle" task queued but NOT run, so a test verifies one
+    // cycle's outcome without cascading into runChecks() again
+    private void runChecksAndDrainProbes(int expectedProbeCount) throws Exception {
+        service.runChecks();
+        for (int i = 0; i < expectedProbeCount; i++) {
+            scheduledTasks.poll().run();
+        }
+    }
+
     @Test
     public void successfulLoginAndWs_recordsBothAsSuccessful() throws Exception {
         givenHealthyLoginAndWs();
 
-        service.runChecks();
+        runChecksAndDrainProbes(1);
 
         verify(probeMetricsRecorder).recordProbe(eq(MonitoredServiceKey.LOGIN), eq(true));
         verify(probeMetricsRecorder).recordProbe(eq(MonitoredServiceKey.WS), eq(true));
@@ -140,7 +172,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
         // exercised here; it's a 3-line, inspectable change in WsClientFactory itself.
         givenHealthyLoginAndWs();
 
-        service.runChecks();
+        runChecksAndDrainProbes(1);
 
         verify(probeMetricsRecorder).recordActionDuration(eq(MonitoredServiceKey.LOGIN), eq("request"), anyLong());
         verify(probeMetricsRecorder).recordActionDuration(eq(MonitoredServiceKey.WS), eq("subscribe"), anyLong());
@@ -151,7 +183,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
         // guards against the redundant System.nanoTime() measurement creeping back into BaseMonitoringService
         givenHealthyLoginAndWs();
 
-        service.runChecks();
+        runChecksAndDrainProbes(1);
 
         verify(probeMetricsRecorder, never()).recordActionDuration(eq(MonitoredServiceKey.WS), eq("connect"), anyLong());
     }
@@ -334,7 +366,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
     public void successfulRun_neverClearsTransportProbeMetrics() throws Exception {
         givenHealthyLoginAndWs();
 
-        service.runChecks();
+        runChecksAndDrainProbes(1);
 
         verify(probeMetricsRecorder, never()).removeProbe(any(), any());
     }
@@ -344,7 +376,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
         // WS is healthy, so E2E already covers this target - checkAccepted() firing too would double-send
         givenHealthyLoginAndWs();
 
-        service.runChecks();
+        runChecksAndDrainProbes(1);
 
         verify(healthChecker, never()).checkAccepted();
     }
@@ -354,7 +386,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
         // fresh E2E data means any stale accepted-fallback value must be cleared, not frozen forever
         givenHealthyLoginAndWs();
 
-        service.runChecks();
+        runChecksAndDrainProbes(1);
 
         verify(probeMetricsRecorder, times(1)).removeAcceptedProbe(any(), eq(ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE));
     }
@@ -370,31 +402,9 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
         givenHealthyLoginAndWs();
 
-        service.runChecks();
+        runChecksAndDrainProbes(2);
 
         verify(probeMetricsRecorder, times(1)).removeAcceptedProbe(associateInfo, ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE);
-    }
-
-    @Test
-    public void unexpectedServiceFailureMidLoop_alsoClearsAcceptedProbeMetrics() throws Exception {
-        // caught by the outer handler, not the 3 known branches - must still clear kind="accepted"
-        givenHealthyLoginAndWs();
-        doThrow(new ServiceFailureException(MonitoredServiceKey.GENERAL, new RuntimeException("boom")))
-                .when(healthChecker).check(any());
-
-        service.runChecks();
-
-        verify(probeMetricsRecorder, times(1)).removeAcceptedProbe(any(), eq(ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE));
-    }
-
-    @Test
-    public void unexpectedThrowableMidLoop_alsoClearsAcceptedProbeMetrics() throws Exception {
-        givenHealthyLoginAndWs();
-        doThrow(new RuntimeException("boom")).when(healthChecker).check(any());
-
-        service.runChecks();
-
-        verify(probeMetricsRecorder, times(1)).removeAcceptedProbe(any(), eq(ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE));
     }
 
     @Test
@@ -413,7 +423,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
         givenHealthyLoginAndWs();
 
-        assertDoesNotThrow(() -> service.runChecks());
+        assertDoesNotThrow(() -> runChecksAndDrainProbes(1));
 
         verify(probeMetricsRecorder, never()).removeProbe(eq(firstInfo), any());
     }
@@ -434,7 +444,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
         givenHealthyLoginAndWs();
 
-        service.runChecks();
+        runChecksAndDrainProbes(1);
 
         verify(reporter).serviceFailure(argThat(key -> key.toString().equals(firstInfo + " (DNS)")), any());
         verify(reporter, never()).serviceFailure(eq(MonitoredServiceKey.GENERAL), any());
@@ -460,36 +470,9 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
         givenHealthyLoginAndWs();
 
-        service.runChecks();
+        runChecksAndDrainProbes(1);
 
         verify(reporter).serviceIsOk(argThat(key -> key.toString().equals(firstInfo + " (DNS)")));
-    }
-
-    @Test
-    public void unexpectedThrowableMidLoop_doesNotClearAlreadyCheckedTargets() throws Exception {
-        // a SECOND checker's check() throws directly - the first checker already completed and
-        // recorded fresh data this cycle (checkedCount was incremented past it) and must survive
-        Object firstInfo = new Object();
-        when(healthChecker.getCachedInfo()).thenReturn(firstInfo);
-
-        BaseHealthChecker<TransportMonitoringConfig, TransportMonitoringTarget> secondChecker =
-                mock(BaseHealthChecker.class);
-        TransportMonitoringTarget secondTarget = new TransportMonitoringTarget();
-        secondTarget.setCheckDomainIps(false);
-        when(secondChecker.getTarget()).thenReturn(secondTarget);
-        Object secondInfo = new Object();
-        when(secondChecker.getCachedInfo()).thenReturn(secondInfo);
-        doThrow(new RuntimeException("boom")).when(secondChecker).check(any());
-        List<BaseHealthChecker<TransportMonitoringConfig, TransportMonitoringTarget>> healthCheckers =
-                (List) ReflectionTestUtils.getField(service, "healthCheckers");
-        healthCheckers.add(secondChecker);
-
-        givenHealthyLoginAndWs();
-
-        assertDoesNotThrow(() -> service.runChecks());
-
-        verify(probeMetricsRecorder, never()).removeProbe(firstInfo, ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE);
-        verify(probeMetricsRecorder, times(1)).removeProbe(secondInfo, ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE);
     }
 
     @Test
@@ -519,6 +502,9 @@ public class BaseMonitoringServiceProbeMetricsTest {
         decommissionedTarget.setDevice(new org.thingsboard.monitoring.config.DeviceConfig());
         when(decommissioned.getTarget()).thenReturn(decommissionedTarget);
 
+        TransportMonitoringTarget currentTarget = new TransportMonitoringTarget();
+        when(current.getTarget()).thenReturn(currentTarget);
+
         java.util.Map<String, BaseHealthChecker<TransportMonitoringConfig, TransportMonitoringTarget>> associates =
                 new java.util.HashMap<>();
         associates.put("tcp://127.0.0.1:1883", current); // still resolves - untouched by reconciliation
@@ -527,7 +513,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
         givenHealthyLoginAndWs();
 
-        service.runChecks();
+        runChecksAndDrainProbes(3);
 
         verify(probeMetricsRecorder).removeProbe(eq(decommissionedInfo), eq(ProbeMetricsRecorder.Removal.PERMANENT));
         verify(probeMetricsRecorder).removeAcceptedProbe(eq(decommissionedInfo), eq(ProbeMetricsRecorder.Removal.PERMANENT));
@@ -542,13 +528,17 @@ public class BaseMonitoringServiceProbeMetricsTest {
         verify(decommissioned).destroyClient();
         verify(current, never()).destroyClient();
         verify(healthChecker, never()).destroyClient();
+        // decommissioned's own flattened slot comes later this same cycle, after it's already been
+        // retired by healthChecker's reconciliation pass above - it must be skipped as no-longer-live,
+        // not re-probed (which would resurrect a probe_success gauge for a target that no longer exists)
+        verify(decommissioned, never()).check(any());
     }
 
     @Test
     public void runChecks_alwaysRecordsHeartbeatOnce_regardlessOfOutcome() throws Exception {
         givenHealthyLoginAndWs();
 
-        service.runChecks();
+        runChecksAndDrainProbes(1);
 
         verify(probeMetricsRecorder, times(1)).recordHeartbeat();
     }
@@ -596,7 +586,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
         givenHealthyLoginAndWs();
 
-        service.runChecks();
+        runChecksAndDrainProbes(1);
 
         ArgumentCaptor<EntityDataQuery> queryCaptor = ArgumentCaptor.forClass(EntityDataQuery.class);
         verify(tbClient).findEntityDataByQuery(queryCaptor.capture());
@@ -620,7 +610,7 @@ public class BaseMonitoringServiceProbeMetricsTest {
 
         givenHealthyLoginAndWs();
 
-        service.runChecks();
+        runChecksAndDrainProbes(1);
 
         verify(reporter).serviceFailure(eq(MonitoredServiceKey.EDQS), any());
     }
@@ -630,6 +620,178 @@ public class BaseMonitoringServiceProbeMetricsTest {
         latest.put(EntityKeyType.ENTITY_FIELD, Map.of("name", new TsValue(0, "device"), "type", new TsValue(0, "default")));
         latest.put(EntityKeyType.TIME_SERIES, Map.of(BaseHealthChecker.TEST_TELEMETRY_KEY, new TsValue(0, "value")));
         return new EntityData(new DeviceId(deviceId), true, true, latest, null);
+    }
+
+    @Test
+    public void checkOne_throwing_doesNotPreventLaterProbesFromRunning() throws Exception {
+        BaseHealthChecker<TransportMonitoringConfig, TransportMonitoringTarget> secondChecker = mock(BaseHealthChecker.class);
+        TransportMonitoringTarget secondTarget = new TransportMonitoringTarget();
+        when(secondChecker.getTarget()).thenReturn(secondTarget);
+        doThrow(new RuntimeException("boom")).when(healthChecker).check(any());
+        List<BaseHealthChecker<TransportMonitoringConfig, TransportMonitoringTarget>> healthCheckers =
+                (List) ReflectionTestUtils.getField(service, "healthCheckers");
+        healthCheckers.add(secondChecker);
+
+        givenHealthyLoginAndWs();
+
+        assertDoesNotThrow(() -> runChecksAndDrainProbes(2));
+
+        verify(secondChecker).check(any());
+    }
+
+    @Test
+    public void reconciliation_neverFiresForAFlattenedAssociateEntry() throws Exception {
+        // regression test: the parent's target actually has checkDomainIps(true) here (unlike the
+        // earlier version of this test, which had no entry with the flag set at all, so its "never"
+        // assertion passed trivially even with reconciliation completely broken)
+        TransportMonitoringTarget target = new TransportMonitoringTarget();
+        target.setCheckDomainIps(true);
+        target.setBaseUrl("tcp://127.0.0.1:1883"); // IP literal - deterministic, no real DNS lookup
+        when(healthChecker.getTarget()).thenReturn(target);
+
+        BaseHealthChecker<TransportMonitoringConfig, TransportMonitoringTarget> associate = mock(BaseHealthChecker.class);
+        TransportMonitoringTarget associateTarget = new TransportMonitoringTarget();
+        associateTarget.setCheckDomainIps(false);
+        when(associate.getTarget()).thenReturn(associateTarget);
+        Map<String, BaseHealthChecker<TransportMonitoringConfig, TransportMonitoringTarget>> associates = new HashMap<>();
+        associates.put("tcp://127.0.0.1:1883", associate); // matches what resolution finds - reconciliation sees no change
+        when(healthChecker.getAssociates()).thenReturn(associates);
+
+        givenHealthyLoginAndWs();
+
+        runChecksAndDrainProbes(2);
+
+        verify(associate).check(any()); // the associate DOES get its own separate probe slot now
+        // ... but reconciliation itself only ever fires from the parent's own slot, exactly once
+        verify(reporter, times(1)).serviceIsOk(argThat(key -> key.toString().endsWith("(DNS)")));
+    }
+
+    @Test
+    public void wsClient_staysOpenUntilTheLastProbe_thenClosesExactlyOnce() throws Exception {
+        BaseHealthChecker<TransportMonitoringConfig, TransportMonitoringTarget> secondChecker = mock(BaseHealthChecker.class);
+        when(secondChecker.getTarget()).thenReturn(new TransportMonitoringTarget());
+        List<BaseHealthChecker<TransportMonitoringConfig, TransportMonitoringTarget>> healthCheckers =
+                (List) ReflectionTestUtils.getField(service, "healthCheckers");
+        healthCheckers.add(secondChecker);
+
+        givenHealthyLoginAndWs();
+        service.runChecks();
+        scheduledTasks.poll().run(); // first probe
+
+        verify(wsClient, never()).close();
+
+        scheduledTasks.poll().run(); // second probe -> finishCycle()
+
+        verify(wsClient, times(1)).close();
+    }
+
+    @Test
+    public void successfulCycle_schedulesExactlyOneNextCycle_notTwo() throws Exception {
+        givenHealthyLoginAndWs();
+
+        runChecksAndDrainProbes(1);
+
+        assertThat(scheduledTasks).hasSize(1); // only the next-cycle task remains, unrun
+    }
+
+    @Test
+    public void scheduleNextCycle_anchorsOnCycleStart_notCycleEnd() throws Exception {
+        // regression test: the next cycle's delay must be monitoringRateMs MINUS how long this cycle
+        // already took (floored at one probe-interval), not a flat monitoringRateMs measured from
+        // when the chain finishes - otherwise the effective period nearly doubles
+        BaseHealthChecker<TransportMonitoringConfig, TransportMonitoringTarget> secondChecker = mock(BaseHealthChecker.class);
+        when(secondChecker.getTarget()).thenReturn(new TransportMonitoringTarget());
+        List<BaseHealthChecker<TransportMonitoringConfig, TransportMonitoringTarget>> healthCheckers =
+                (List) ReflectionTestUtils.getField(service, "healthCheckers");
+        healthCheckers.add(secondChecker); // 2 flattened entries -> probeIntervalMs = 60000 / 2 = 30000
+
+        givenHealthyLoginAndWs();
+        service.runChecks();
+
+        // simulate the chain having already consumed 20s of wall-clock time since the cycle started
+        ReflectionTestUtils.setField(service, "cycleStartMs", System.currentTimeMillis() - 20000);
+        scheduledTasks.poll().run(); // first probe
+        scheduledTasks.poll().run(); // second probe -> finishCycle() -> scheduleNextCycle()
+
+        ArgumentCaptor<Long> delayCaptor = ArgumentCaptor.forClass(Long.class);
+        verify(scheduler, atLeastOnce()).schedule(any(Runnable.class), delayCaptor.capture(), eq(TimeUnit.MILLISECONDS));
+        long nextCycleDelayMs = delayCaptor.getAllValues().get(delayCaptor.getAllValues().size() - 1);
+
+        assertThat(nextCycleDelayMs).isLessThan(50000L); // well under a flat 60000ms
+        assertThat(nextCycleDelayMs).isGreaterThanOrEqualTo(30000L); // never less than one probe-interval of headroom
+    }
+
+    @Test
+    public void emptyHealthCheckers_stillSchedulesNextCycle() {
+        ((List<?>) ReflectionTestUtils.getField(service, "healthCheckers")).clear();
+
+        service.runChecks();
+
+        assertThat(scheduledTasks).hasSize(1);
+    }
+
+    @Test
+    public void loginFailure_schedulesNextCycle() throws Exception {
+        givenLoginFails();
+
+        service.runChecks();
+
+        assertThat(scheduledTasks).hasSize(1);
+    }
+
+    @Test
+    public void wsSubscribeFailure_closesWsClientAndSchedulesNextCycle() throws Exception {
+        givenWsSubscribeFails();
+
+        service.runChecks();
+
+        verify(wsClient).close();
+        assertThat(scheduledTasks).hasSize(1);
+    }
+
+    @Test
+    public void edqsFailure_stillSchedulesNextCycle_andClosesWs() throws Exception {
+        ReflectionTestUtils.setField(service, "checkEdqs", true);
+        ReflectionTestUtils.setField(service, "devices", new LinkedList<>(List.of(UUID.randomUUID())));
+        when(tbClient.findEntityDataByQuery(any())).thenThrow(new RuntimeException("edqs down"));
+        givenHealthyLoginAndWs();
+
+        runChecksAndDrainProbes(1);
+
+        verify(reporter).serviceFailure(eq(MonitoredServiceKey.EDQS), any());
+        verify(reporter, never()).serviceIsOk(MonitoredServiceKey.GENERAL);
+        verify(wsClient).close();
+        assertThat(scheduledTasks).hasSize(1);
+    }
+
+    @Test
+    public void scheduleNextCycle_schedulerThrows_isSwallowedNotPropagated() {
+        // unlike the scheduleWithFixedDelay() this replaced (whose periodic re-invocation didn't
+        // depend on anything the app itself does), a plain scheduler.schedule() call has no wrapper
+        // catching an escaping exception - left unguarded, a RejectedExecutionException racing
+        // shutdown (or any other failure at this exact call) would silently and permanently stop
+        // this service's monitoring, with nothing in the logs to show it
+        ScheduledExecutorService throwingScheduler = mock(ScheduledExecutorService.class);
+        doThrow(new java.util.concurrent.RejectedExecutionException("shutting down"))
+                .when(throwingScheduler).schedule(any(Runnable.class), anyLong(), eq(TimeUnit.MILLISECONDS));
+        ReflectionTestUtils.setField(service, "scheduler", throwingScheduler);
+
+        assertDoesNotThrow(() -> ReflectionTestUtils.invokeMethod(service, "scheduleNextCycle"));
+    }
+
+    @Test
+    public void chainKickoffFails_stillClosesWsClient() throws Exception {
+        // if scheduling the very first probe throws, finishCycle() (which normally closes ws) is
+        // never reached - nothing else on this path used to close the WS connection
+        givenHealthyLoginAndWs();
+        ScheduledExecutorService throwingScheduler = mock(ScheduledExecutorService.class);
+        doThrow(new java.util.concurrent.RejectedExecutionException("shutting down"))
+                .when(throwingScheduler).schedule(any(Runnable.class), anyLong(), eq(TimeUnit.MILLISECONDS));
+        ReflectionTestUtils.setField(service, "scheduler", throwingScheduler);
+
+        assertDoesNotThrow(() -> service.runChecks());
+
+        verify(wsClient).close();
     }
 
     @Test
@@ -671,6 +833,100 @@ public class BaseMonitoringServiceProbeMetricsTest {
         java.net.InetAddress[] resolved = BaseMonitoringService.resolveWithTimeout("fast-host", 5000, () -> new java.net.InetAddress[0]);
 
         assertThat(resolved).isEmpty();
+    }
+
+    @Test
+    public void flattenHealthCheckers_singleTopLevelNoAssociates_returnsJustIt() {
+        List<Object> flattened = (List<Object>) ReflectionTestUtils.invokeMethod(service, "flattenHealthCheckers");
+
+        assertThat(flattened).containsExactly(healthChecker);
+    }
+
+    @Test
+    public void flattenHealthCheckers_includesAssociates() {
+        BaseHealthChecker<TransportMonitoringConfig, TransportMonitoringTarget> associate = mock(BaseHealthChecker.class);
+        when(healthChecker.getAssociates()).thenReturn(Map.of("associate-url", associate));
+
+        List<Object> flattened = (List<Object>) ReflectionTestUtils.invokeMethod(service, "flattenHealthCheckers");
+
+        assertThat(flattened).containsExactlyInAnyOrder(healthChecker, associate);
+        assertThat(flattened).hasSize(2);
+    }
+
+    @Test
+    public void flattenHealthCheckers_recomputedFresh_reflectsAssociatesAddedSinceLastCall() {
+        assertThat((List<?>) ReflectionTestUtils.invokeMethod(service, "flattenHealthCheckers")).hasSize(1);
+
+        BaseHealthChecker<TransportMonitoringConfig, TransportMonitoringTarget> associate = mock(BaseHealthChecker.class);
+        when(healthChecker.getAssociates()).thenReturn(Map.of("associate-url", associate));
+
+        assertThat((List<?>) ReflectionTestUtils.invokeMethod(service, "flattenHealthCheckers")).hasSize(2);
+    }
+
+    @Test
+    public void shutdownBetweenProbes_closesOpenWs() throws Exception {
+        BaseHealthChecker<TransportMonitoringConfig, TransportMonitoringTarget> secondChecker = mock(BaseHealthChecker.class);
+        when(secondChecker.getTarget()).thenReturn(new TransportMonitoringTarget());
+        ((List) ReflectionTestUtils.getField(service, "healthCheckers")).add(secondChecker);
+        givenHealthyLoginAndWs();
+        ScheduledExecutorService realScheduler = new MonitoringSchedulerConfig().monitoringScheduler();
+        ReflectionTestUtils.setField(service, "scheduler", realScheduler);
+        try (GenericApplicationContext context = new GenericApplicationContext()) {
+            context.getBeanFactory().addBeanPostProcessor(new CommonAnnotationBeanPostProcessor());
+            var app = new ThingsboardMonitoringApplication(List.of(service), mock(MonitoringEntityService.class),
+                    mock(PublicSharingService.class), mock(NotificationService.class), realScheduler);
+            context.registerBean("monitoringService", TestMonitoringService.class, () -> service);
+            context.registerBean("app", ThingsboardMonitoringApplication.class, () -> app);
+            context.refresh();
+            service.runChecks();
+            realScheduler.submit(() -> {}).get(5, TimeUnit.SECONDS);
+            verify(healthChecker).check(wsClient);
+            verify(secondChecker, never()).check(any());
+            context.close();
+            assertThat(realScheduler.isShutdown()).isTrue();
+            verify(wsClient).close();
+        } finally {
+            realScheduler.shutdownNow();
+        }
+    }
+
+    @Test
+    public void interleavedCycles_preserveHighLoginLatencyAlert() throws Exception {
+        givenHealthyLoginAndWs();
+        BaseHealthChecker<TransportMonitoringConfig, TransportMonitoringTarget> secondChecker = mock(BaseHealthChecker.class);
+        when(secondChecker.getTarget()).thenReturn(new TransportMonitoringTarget());
+        ((List) ReflectionTestUtils.getField(service, "healthCheckers")).add(secondChecker);
+        NotificationService notifications = mock(NotificationService.class);
+        MonitoringReporter sharedReporter = new MonitoringReporter(notifications, tbClient, mock(MonitoringEntityService.class));
+        ReflectionTestUtils.setField(sharedReporter, "latencyReportingEnabled", true);
+        ReflectionTestUtils.setField(sharedReporter, "latencyThresholdMs", 1000);
+        ReflectionTestUtils.setField(sharedReporter, "reportingAssetId", UUID.randomUUID().toString());
+        ReflectionTestUtils.setField(service, "reporter", sharedReporter);
+        TbStopWatch slowTimer = mock(TbStopWatch.class);
+        when(slowTimer.getTime()).thenReturn(2_000_000_000L, 5_000_000L);
+        ReflectionTestUtils.setField(service, "stopWatch", slowTimer);
+
+        TestMonitoringService secondService = new TestMonitoringService();
+        ReflectionTestUtils.setField(secondService, "tbClient", tbClient);
+        ReflectionTestUtils.setField(secondService, "wsClientFactory", wsClientFactory);
+        ReflectionTestUtils.setField(secondService, "reporter", sharedReporter);
+        ReflectionTestUtils.setField(secondService, "probeMetricsRecorder", probeMetricsRecorder);
+        ReflectionTestUtils.setField(secondService, "scheduler", scheduler);
+        ReflectionTestUtils.setField(secondService, "monitoringRateMs", 60000);
+        TbStopWatch fastTimer = mock(TbStopWatch.class);
+        when(fastTimer.getTime()).thenReturn(5_000_000L);
+        ReflectionTestUtils.setField(secondService, "stopWatch", fastTimer);
+        ((List) ReflectionTestUtils.getField(secondService, "healthCheckers")).add(healthChecker);
+
+        service.runChecks();
+        scheduledTasks.poll().run();
+        secondService.runChecks();
+        scheduledTasks.poll().run();
+        scheduledTasks.poll().run();
+
+        ArgumentCaptor<HighLatencyNotification> alertCaptor = ArgumentCaptor.forClass(HighLatencyNotification.class);
+        verify(notifications).sendNotification(alertCaptor.capture());
+        assertThat(alertCaptor.getValue().getText()).contains("logInLatency");
     }
 
     private static class TestMonitoringService extends BaseMonitoringService<TransportMonitoringConfig, TransportMonitoringTarget> {

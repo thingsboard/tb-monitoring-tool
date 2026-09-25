@@ -16,6 +16,7 @@
 package org.thingsboard.monitoring.service;
 
 import com.google.common.collect.Sets;
+import jakarta.annotation.PreDestroy;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -47,6 +48,7 @@ import java.net.InetAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.UnknownHostException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -61,8 +63,10 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -77,6 +81,7 @@ public abstract class BaseMonitoringService<C extends MonitoringConfig<T>, T ext
     private List<C> configs;
     private final List<BaseHealthChecker<C, T>> healthCheckers = new LinkedList<>();
     private final List<UUID> devices = new LinkedList<>();
+    private final AtomicReference<WsClient> activeWs = new AtomicReference<>();
 
     @Autowired
     private TbClient tbClient;
@@ -90,11 +95,20 @@ public abstract class BaseMonitoringService<C extends MonitoringConfig<T>, T ext
     private ProbeMetricsRecorder probeMetricsRecorder;
     @Autowired
     protected ApplicationContext applicationContext;
+    @Autowired
+    private ScheduledExecutorService scheduler;
 
     @Value("${monitoring.edqs.enabled:false}")
     private boolean checkEdqs;
     @Value("${monitoring.calculated_fields.enabled:true}")
     protected boolean checkCalculatedFields;
+    @Value("${monitoring.monitoring_rate_ms}")
+    private int monitoringRateMs;
+    // both anchor scheduleNextCycle()'s delay on when THIS cycle started rather than when it
+    // finishes - single-threaded scheduler, only one cycle in flight per service, so plain fields
+    // are safe. probeIntervalMs also doubles as the delay floor (see nextCycleDelayMs()).
+    private long cycleStartMs;
+    private long probeIntervalMs;
 
     public void init() {
         if (configs == null || configs.isEmpty()) {
@@ -123,13 +137,25 @@ public abstract class BaseMonitoringService<C extends MonitoringConfig<T>, T ext
         return healthChecker;
     }
 
+    private List<BaseHealthChecker<C, T>> flattenHealthCheckers() {
+        List<BaseHealthChecker<C, T>> flattened = new ArrayList<>();
+        for (BaseHealthChecker<C, T> healthChecker : healthCheckers) {
+            flattened.add(healthChecker);
+            flattened.addAll(healthChecker.getAssociates().values());
+        }
+        return flattened;
+    }
+
     public final void runChecks() {
+        cycleStartMs = System.currentTimeMillis();
+        // reset so a cycle that fails before ever computing a real value (login/WS-connect/WS-subscribe
+        // failure) doesn't apply a stale floor left over from a previous successful cycle's probe count
+        probeIntervalMs = 0;
         if (healthCheckers.isEmpty()) {
+            scheduleNextCycle();
             return;
         }
-        // how many healthCheckers completed check() this cycle - so an unexpected failure partway
-        // through the loop below only clears the ones not yet reached, not everyone's fresh data
-        int checkedCount = 0;
+        boolean chainStarted = false;
         try {
             log.info("Starting {}", getName());
             probeMetricsRecorder.startCycle();
@@ -148,8 +174,6 @@ public abstract class BaseMonitoringService<C extends MonitoringConfig<T>, T ext
             } catch (Exception e) {
                 reporter.serviceFailure(MonitoredServiceKey.LOGIN, e);
                 probeMetricsRecorder.removeActionDuration(MonitoredServiceKey.LOGIN, ProbeMetricsRecorder.ACTION_REQUEST);
-                // WS and transport checks never ran this cycle - clear their gauges instead of
-                // leaving last cycle's value stale, then fall back to the WS-independent signal
                 probeMetricsRecorder.removeProbe(MonitoredServiceKey.WS, ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE);
                 fallBackToAcceptedChecks();
                 return;
@@ -157,81 +181,120 @@ public abstract class BaseMonitoringService<C extends MonitoringConfig<T>, T ext
                 probeMetricsRecorder.recordProbe(MonitoredServiceKey.LOGIN, loginSuccess);
             }
 
-            WsClient wsClient;
+            WsClient ws;
             try {
-                wsClient = wsClientFactory.createClient(accessToken);
+                ws = wsClientFactory.createClient(accessToken);
+                activeWs.set(ws);
                 reporter.serviceIsOk(MonitoredServiceKey.WS_CONNECT);
             } catch (Exception e) {
                 reporter.serviceFailure(MonitoredServiceKey.WS_CONNECT, e);
                 probeMetricsRecorder.removeActionDuration(MonitoredServiceKey.WS, ProbeMetricsRecorder.ACTION_CONNECT);
-                // subscribe never runs this cycle either - its last value is now stale too
                 probeMetricsRecorder.removeActionDuration(MonitoredServiceKey.WS, ProbeMetricsRecorder.ACTION_SUBSCRIBE);
                 probeMetricsRecorder.recordProbe(MonitoredServiceKey.WS, false);
                 fallBackToAcceptedChecks();
                 return;
             }
 
-            try (WsClient ws = wsClient) {
-                try {
-                    stopWatch.start();
-                    ws.subscribeForTelemetry(devices, getTestTelemetryKeys()).waitForReply();
-                    long subscribeLatencyNanos = stopWatch.getTime();
-                    reporter.reportLatency(Latencies.WS_SUBSCRIBE, subscribeLatencyNanos);
-                    probeMetricsRecorder.recordActionDuration(MonitoredServiceKey.WS, ProbeMetricsRecorder.ACTION_SUBSCRIBE, subscribeLatencyNanos);
-                    reporter.serviceIsOk(MonitoredServiceKey.WS_SUBSCRIBE);
-                    probeMetricsRecorder.recordProbe(MonitoredServiceKey.WS, true);
-                } catch (Exception e) {
-                    reporter.serviceFailure(MonitoredServiceKey.WS_SUBSCRIBE, e);
-                    probeMetricsRecorder.removeActionDuration(MonitoredServiceKey.WS, ProbeMetricsRecorder.ACTION_SUBSCRIBE);
-                    probeMetricsRecorder.recordProbe(MonitoredServiceKey.WS, false);
-                    fallBackToAcceptedChecks();
-                    return;
-                }
-
-                for (BaseHealthChecker<C, T> healthChecker : healthCheckers) {
-                    check(healthChecker, ws);
-                    checkedCount++;
-                }
+            try {
+                stopWatch.start();
+                ws.subscribeForTelemetry(devices, getTestTelemetryKeys()).waitForReply();
+                long subscribeLatencyNanos = stopWatch.getTime();
+                reporter.reportLatency(Latencies.WS_SUBSCRIBE, subscribeLatencyNanos);
+                probeMetricsRecorder.recordActionDuration(MonitoredServiceKey.WS, ProbeMetricsRecorder.ACTION_SUBSCRIBE, subscribeLatencyNanos);
+                reporter.serviceIsOk(MonitoredServiceKey.WS_SUBSCRIBE);
+                probeMetricsRecorder.recordProbe(MonitoredServiceKey.WS, true);
+            } catch (Exception e) {
+                reporter.serviceFailure(MonitoredServiceKey.WS_SUBSCRIBE, e);
+                probeMetricsRecorder.removeActionDuration(MonitoredServiceKey.WS, ProbeMetricsRecorder.ACTION_SUBSCRIBE);
+                probeMetricsRecorder.recordProbe(MonitoredServiceKey.WS, false);
+                closeQuietly(ws);
+                fallBackToAcceptedChecks();
+                return;
             }
 
-            if (checkEdqs) {
-                try {
-                    stopWatch.start();
-                    checkEdqs();
-                    reporter.reportLatency(Latencies.EDQS_QUERY, stopWatch.getTime());
-                    reporter.serviceIsOk(MonitoredServiceKey.EDQS);
-                } catch (ServiceFailureException e) {
-                    reporter.serviceFailure(e.getServiceKey(), e);
-                    return;
-                } catch (Exception e) {
-                    reporter.serviceFailure(MonitoredServiceKey.EDQS, e);
-                    return;
-                }
+            try {
+                reporter.reportLatencies();
+                List<BaseHealthChecker<C, T>> flattened = flattenHealthCheckers();
+                probeIntervalMs = monitoringRateMs / flattened.size();
+                scheduleProbe(flattened, 0, ws);
+                chainStarted = true;
+            } catch (Throwable t) {
+                // nothing past this point closes ws otherwise - finishCycle() (which normally does)
+                // is never reached if the chain never actually got kicked off
+                closeQuietly(ws);
+                throw t;
             }
-
-            reporter.reportLatencies();
-            reporter.serviceIsOk(MonitoredServiceKey.GENERAL);
-            log.debug("Finished {}", getName());
-        } catch (ServiceFailureException e) {
-            reporter.serviceFailure(e.getServiceKey(), e);
-            // clear only the healthCheckers this cycle didn't get to - the ones before checkedCount
-            // already have fresh data this cycle and must not be wiped
-            clearUncheckedProbeMetrics(checkedCount);
-            clearUncheckedAcceptedMetrics(checkedCount);
         } catch (Throwable error) {
-            clearUncheckedProbeMetrics(checkedCount);
-            clearUncheckedAcceptedMetrics(checkedCount);
             try {
                 reporter.serviceFailure(MonitoredServiceKey.GENERAL, error);
             } catch (Throwable reportError) {
                 log.error("Error occurred during service failure reporting", reportError);
             }
+        } finally {
+            if (!chainStarted) {
+                scheduleNextCycle();
+            }
         }
     }
 
-    private void check(BaseHealthChecker<C, T> healthChecker, WsClient wsClient) throws Exception {
-        healthChecker.check(wsClient);
-        clearAcceptedMetricsFor(healthChecker);
+    private void scheduleProbe(List<BaseHealthChecker<C, T>> flattened, int index, WsClient ws) {
+        if (index >= flattened.size()) {
+            finishCycle(ws);
+            return;
+        }
+        scheduler.schedule(() -> {
+            try {
+                // an earlier entry's slot (e.g. a DNS reconciliation) may have already retired this
+                // one this same cycle - re-probing it would resurrect a gauge for a target that's gone
+                if (isLive(flattened.get(index))) {
+                    checkOne(flattened.get(index), ws);
+                }
+            } catch (Throwable t) {
+                log.warn("[{}] Probe failed for {}", getName(), flattened.get(index).getCachedInfo(), t);
+            } finally {
+                scheduleNextProbeOrFinish(flattened, index + 1, ws);
+            }
+        }, index == 0 ? 0 : probeIntervalMs, TimeUnit.MILLISECONDS);
+    }
+
+    // scheduler.schedule() itself can throw (e.g. a RejectedExecutionException racing shutdown) - unlike
+    // the scheduleWithFixedDelay() this replaced, a plain schedule() has no wrapper that catches and
+    // logs an escaping exception, so left unguarded this would silently and permanently stop the chain
+    // (and, for the terminal step, this service's monitoring for good) with nothing in the logs to show it
+    private void scheduleNextProbeOrFinish(List<BaseHealthChecker<C, T>> flattened, int index, WsClient ws) {
+        try {
+            scheduleProbe(flattened, index, ws);
+        } catch (Throwable t) {
+            log.error("[{}] Failed to schedule the next step of the probe chain - closing early and retrying next cycle", getName(), t);
+            closeQuietly(ws);
+            scheduleNextCycle();
+        }
+    }
+
+    @PreDestroy
+    private void closeActiveWs() {
+        WsClient ws = activeWs.getAndSet(null);
+        if (ws != null) {
+            closeQuietly(ws);
+        }
+    }
+
+    private void closeQuietly(WsClient ws) {
+        activeWs.compareAndSet(ws, null);
+        try {
+            ws.close();
+        } catch (Exception e) {
+            log.warn("Failed to close WS client for {}", getName(), e);
+        }
+    }
+
+    private boolean isLive(BaseHealthChecker<C, T> healthChecker) {
+        return flattenHealthCheckers().contains(healthChecker);
+    }
+
+    private void checkOne(BaseHealthChecker<C, T> healthChecker, WsClient ws) throws Exception {
+        healthChecker.check(ws);
+        probeMetricsRecorder.removeAcceptedProbe(healthChecker.getCachedInfo(), ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE);
 
         T target = healthChecker.getTarget();
         if (target.isCheckDomainIps()) {
@@ -250,6 +313,53 @@ public abstract class BaseMonitoringService<C extends MonitoringConfig<T>, T ext
                 log.warn("Failed to reconcile associate IPs for {}", target.getBaseUrl(), e);
             }
         }
+    }
+
+    private void finishCycle(WsClient ws) {
+        try {
+            if (checkEdqs) {
+                try {
+                    stopWatch.start();
+                    checkEdqs();
+                    reporter.reportLatency(Latencies.EDQS_QUERY, stopWatch.getTime());
+                    reporter.serviceIsOk(MonitoredServiceKey.EDQS);
+                } catch (ServiceFailureException e) {
+                    reporter.serviceFailure(e.getServiceKey(), e);
+                    return;
+                } catch (Exception e) {
+                    reporter.serviceFailure(MonitoredServiceKey.EDQS, e);
+                    return;
+                }
+            }
+            reporter.reportLatencies();
+            reporter.serviceIsOk(MonitoredServiceKey.GENERAL);
+            log.debug("Finished {}", getName());
+        } finally {
+            closeQuietly(ws);
+            scheduleNextCycle();
+        }
+    }
+
+    // this is the terminal step of every cycle - unlike the scheduleWithFixedDelay() this replaced
+    // (whose periodic re-invocation didn't depend on anything we do), recurrence from here on is
+    // entirely our own responsibility, so an exception escaping this specific call (e.g. a
+    // RejectedExecutionException racing shutdown) must never be allowed to silently and permanently
+    // stop this service's monitoring with nothing in the logs to show it
+    private void scheduleNextCycle() {
+        try {
+            scheduler.schedule(this::runChecks, nextCycleDelayMs(), TimeUnit.MILLISECONDS);
+        } catch (Throwable t) {
+            log.error("[{}] Failed to schedule the next monitoring cycle - monitoring has stopped and needs a restart", getName(), t);
+        }
+    }
+
+    // anchored on cycleStartMs (not "now") so a cycle whose probes consumed most of monitoringRateMs
+    // doesn't push the next cycle out to roughly 2x monitoringRateMs after this one started. The
+    // probeIntervalMs floor keeps at least one probe-interval of headroom so an overrunning cycle
+    // can't schedule the next one on top of a still-draining chain.
+    private long nextCycleDelayMs() {
+        long elapsedMs = System.currentTimeMillis() - cycleStartMs;
+        return Math.max(probeIntervalMs, monitoringRateMs - elapsedMs);
     }
 
     private record ReconciliationFailureKey(Object delegate) implements ShortNameProvider {
@@ -398,26 +508,9 @@ public abstract class BaseMonitoringService<C extends MonitoringConfig<T>, T ext
     // takes over instead (covers both transport and integration health checkers - this method runs
     // for either subclass, not just TransportsMonitoringService)
     private void fallBackToAcceptedChecks() {
-        clearUncheckedProbeMetrics(0);
+        flattenHealthCheckers().forEach(healthChecker ->
+                probeMetricsRecorder.removeProbe(healthChecker.getCachedInfo(), ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE));
         checkAllAccepted();
-    }
-
-    private void clearUncheckedProbeMetrics(int fromIndex) {
-        healthCheckers.subList(fromIndex, healthCheckers.size()).forEach(this::clearProbeMetricsFor);
-    }
-
-    private void clearProbeMetricsFor(BaseHealthChecker<C, T> healthChecker) {
-        probeMetricsRecorder.removeProbe(healthChecker.getCachedInfo(), ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE);
-        healthChecker.getAssociates().values().forEach(this::clearProbeMetricsFor);
-    }
-
-    private void clearUncheckedAcceptedMetrics(int fromIndex) {
-        healthCheckers.subList(fromIndex, healthCheckers.size()).forEach(this::clearAcceptedMetricsFor);
-    }
-
-    private void clearAcceptedMetricsFor(BaseHealthChecker<C, T> healthChecker) {
-        probeMetricsRecorder.removeAcceptedProbe(healthChecker.getCachedInfo(), ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE);
-        healthChecker.getAssociates().values().forEach(this::clearAcceptedMetricsFor);
     }
 
     // always runs regardless of OTLP/Prometheus export; deliberately serial (see freshThisCycle)

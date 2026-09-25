@@ -87,8 +87,8 @@ public abstract class BaseHealthChecker<C extends MonitoringConfig, T extends Mo
             // a successful end-to-end check implies the transport accepted messages fine too - clear
             // any "(accepted)" failure state left over from an earlier login/WS outage, or it would
             // never recover on its own (checkAccepted() only runs again during the next outage) and
-            // its incident would stay open forever. Mirrors clearAcceptedMetricsFor() on the
-            // metrics side.
+            // its incident would stay open forever. Mirrors the accepted-probe metric removal in
+            // BaseMonitoringService.checkOne().
             reporter.serviceIsOk(acceptedProbeKey());
             success = true;
         } catch (ServiceFailureException e) {
@@ -98,10 +98,9 @@ public abstract class BaseHealthChecker<C extends MonitoringConfig, T extends Mo
         } finally {
             probeMetricsRecorder.recordProbe(info, success);
         }
-
-        associates.values().forEach(healthChecker -> {
-            healthChecker.check(wsClient);
-        });
+        // no associates fan-out here (unlike checkAccepted() below): BaseMonitoringService's
+        // flattenHealthCheckers() now schedules every associate as its own separate chain entry, so
+        // this would double-probe each one - once here, once at its own scheduled slot
     }
 
     // the actual probe sequence, factored out of check() so that method is just the alerting/metrics
