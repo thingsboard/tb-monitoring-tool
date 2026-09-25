@@ -121,6 +121,19 @@ public class CoapTransportHealthCheckerTest {
         assertThat(receivedPayload).isNull();
     }
 
+    // e.g. Temurin's cacerts has P-521 roots
+    @Test
+    void coaps_initClient_whenTruststoreHasP521Cert() throws Exception {
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("EC");
+        generator.initialize(521);
+        trustOnly(selfSignedCert(generator.generateKeyPair(), "SHA512withECDSA", "p521.example.com"));
+        checker = checker("coaps://localhost:5684", 3000);
+
+        checker.initClient();
+
+        assertThat(ReflectionTestUtils.getField(checker, "coapClient")).isNotNull();
+    }
+
     @Test
     void noResponse_failsWithTimeoutAndResetsClient() throws Exception {
         int unusedPort;
@@ -156,13 +169,7 @@ public class CoapTransportHealthCheckerTest {
         KeyPairGenerator generator = KeyPairGenerator.getInstance(keyAlgorithm);
         generator.initialize("EC".equals(keyAlgorithm) ? 256 : 2048);
         KeyPair keyPair = generator.generateKeyPair();
-        X500Name name = new X500Name("CN=" + dnsName);
-        Instant now = Instant.now();
-        X509Certificate cert = new JcaX509CertificateConverter().getCertificate(
-                new JcaX509v3CertificateBuilder(name, BigInteger.ONE, Date.from(now.minus(Duration.ofDays(1))),
-                        Date.from(now.plus(Duration.ofDays(1))), name, keyPair.getPublic())
-                        .addExtension(Extension.subjectAlternativeName, false, new GeneralNames(new GeneralName(GeneralName.dNSName, dnsName)))
-                        .build(new JcaContentSignerBuilder(signatureAlgorithm).build(keyPair.getPrivate())));
+        X509Certificate cert = selfSignedCert(keyPair, signatureAlgorithm, dnsName);
 
         Configuration configuration = new Configuration();
         configuration.set(DtlsConfig.DTLS_ROLE, DtlsConfig.DtlsRole.SERVER_ONLY);
@@ -183,6 +190,16 @@ public class CoapTransportHealthCheckerTest {
         }))));
         server.start();
         return cert;
+    }
+
+    private static X509Certificate selfSignedCert(KeyPair keyPair, String signatureAlgorithm, String dnsName) throws Exception {
+        X500Name name = new X500Name("CN=" + dnsName);
+        Instant now = Instant.now();
+        return new JcaX509CertificateConverter().getCertificate(
+                new JcaX509v3CertificateBuilder(name, BigInteger.ONE, Date.from(now.minus(Duration.ofDays(1))),
+                        Date.from(now.plus(Duration.ofDays(1))), name, keyPair.getPublic())
+                        .addExtension(Extension.subjectAlternativeName, false, new GeneralNames(new GeneralName(GeneralName.dNSName, dnsName)))
+                        .build(new JcaContentSignerBuilder(signatureAlgorithm).build(keyPair.getPrivate())));
     }
 
     private int serverPort() {

@@ -119,6 +119,8 @@ public class CoapTransportHealthChecker extends TransportHealthChecker<CoapTrans
         // is signed otherwise (e.g. Let's Encrypt ECDSA chains are SHA384withECDSA)
         configuration.setAsListFromText(DtlsConfig.DTLS_SIGNATURE_AND_HASH_ALGORITHMS,
                 "SHA256withECDSA", "SHA384withECDSA", "SHA512withECDSA", "SHA256withRSA", "SHA384withRSA", "SHA512withRSA");
+        // curves of all trusted keys get enabled, and the JVM truststore may hold P-521 roots, which Californium rejects by default
+        configuration.set(DtlsConfig.DTLS_RECOMMENDED_CURVES_ONLY, false);
         TrustManagerFactory trustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
         trustManagerFactory.init((KeyStore) null);
         X509Certificate[] trustedCertificates = ((X509TrustManager) trustManagerFactory.getTrustManagers()[0]).getAcceptedIssuers();
