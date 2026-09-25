@@ -49,10 +49,12 @@ import org.thingsboard.server.common.data.cf.configuration.ArgumentType;
 import org.thingsboard.server.common.data.cf.configuration.ReferencedEntityKey;
 import org.thingsboard.server.common.data.cf.configuration.ScriptCalculatedFieldConfiguration;
 import org.thingsboard.server.common.data.cf.configuration.TimeSeriesOutput;
+import org.thingsboard.server.common.data.device.credentials.lwm2m.AbstractLwM2MClientCredential;
 import org.thingsboard.server.common.data.device.credentials.lwm2m.LwM2MBootstrapClientCredentials;
 import org.thingsboard.server.common.data.device.credentials.lwm2m.LwM2MDeviceCredentials;
 import org.thingsboard.server.common.data.device.credentials.lwm2m.NoSecBootstrapClientCredential;
 import org.thingsboard.server.common.data.device.credentials.lwm2m.NoSecClientCredential;
+import org.thingsboard.server.common.data.device.credentials.lwm2m.PSKClientCredential;
 import org.thingsboard.server.common.data.device.data.DefaultDeviceConfiguration;
 import org.thingsboard.server.common.data.device.data.DefaultDeviceTransportConfiguration;
 import org.thingsboard.server.common.data.device.data.DeviceData;
@@ -188,7 +190,15 @@ public class MonitoringEntityService {
             deviceData.setTransportConfiguration(new Lwm2mDeviceTransportConfiguration());
             credentials.setCredentialsType(DeviceCredentialsType.LWM2M_CREDENTIALS);
             LwM2MDeviceCredentials lwm2mCreds = new LwM2MDeviceCredentials();
-            NoSecClientCredential client = new NoSecClientCredential();
+            AbstractLwM2MClientCredential client;
+            if (target.getBaseUrl().startsWith("coaps://")) {
+                PSKClientCredential psk = new PSKClientCredential();
+                psk.setIdentity(credentials.getCredentialsId());
+                psk.setKey(RandomStringUtils.secure().next(64, "0123456789abcdef"));
+                client = psk;
+            } else {
+                client = new NoSecClientCredential();
+            }
             client.setEndpoint(credentials.getCredentialsId());
             lwm2mCreds.setClient(client);
             LwM2MBootstrapClientCredentials bootstrap = new LwM2MBootstrapClientCredentials();
