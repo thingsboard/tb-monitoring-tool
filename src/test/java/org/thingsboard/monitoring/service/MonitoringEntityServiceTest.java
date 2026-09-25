@@ -20,14 +20,27 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.thingsboard.monitoring.client.TbClient;
 import org.thingsboard.common.util.JacksonUtil;
+import org.thingsboard.monitoring.config.transport.Lwm2mTransportMonitoringConfig;
+import org.thingsboard.monitoring.config.transport.TransportMonitoringTarget;
 import org.thingsboard.monitoring.util.ResourceUtils;
 import org.thingsboard.server.common.data.Dashboard;
 import org.thingsboard.server.common.data.DashboardInfo;
+import org.thingsboard.server.common.data.Device;
+import org.thingsboard.server.common.data.DeviceProfile;
+import org.thingsboard.server.common.data.device.credentials.lwm2m.LwM2MClientCredential;
+import org.thingsboard.server.common.data.device.credentials.lwm2m.LwM2MDeviceCredentials;
+import org.thingsboard.server.common.data.device.credentials.lwm2m.LwM2MSecurityMode;
+import org.thingsboard.server.common.data.device.credentials.lwm2m.PSKClientCredential;
 import org.thingsboard.server.common.data.id.DashboardId;
+import org.thingsboard.server.common.data.id.DeviceId;
+import org.thingsboard.server.common.data.id.DeviceProfileId;
 import org.thingsboard.server.common.data.page.PageData;
 import org.thingsboard.server.common.data.page.PageLink;
+import org.thingsboard.server.common.data.security.DeviceCredentials;
 
 import java.util.List;
 import java.util.Optional;
@@ -35,6 +48,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -45,7 +59,7 @@ import static org.mockito.Mockito.when;
 // PR added to this class). The version lives inside Dashboard.configuration rather than as a saved
 // attribute - ThingsBoard CE has no support for attribute writes on DASHBOARD entities ("Not
 // Implemented!"), only PE does. The rule chain/asset/device-provisioning logic predates this PR and
-// isn't covered here. Integration entity provisioning is IntegrationHealthChecker's own concern now
+// isn't covered here, apart from LwM2M device credentials. Integration entity provisioning is IntegrationHealthChecker's own concern now
 // (it injects IntegrationEntityService directly) - see IntegrationEntityServiceTest.
 @ExtendWith(MockitoExtension.class)
 class MonitoringEntityServiceTest {
@@ -156,6 +170,39 @@ class MonitoringEntityServiceTest {
         assertThat(result.getConfiguration().get("version").asInt()).isEqualTo(currentDashboardResourceVersion());
         verify(tbClient).saveDashboard(any());
         verify(tbClient, never()).saveEntityAttributesV2(any(), any(), any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"coap://tb.example.com:5685", "coaps://tb.example.com:5686"})
+    void lwm2mDeviceGetsPskCredentialsOnlyForCoaps(String baseUrl) {
+        DeviceProfile profile = new DeviceProfile(new DeviceProfileId(UUID.randomUUID()));
+        profile.setName("LwM2M (Main)");
+        when(tbClient.getTenantDevice(anyString())).thenReturn(Optional.empty());
+        when(tbClient.getDeviceProfiles(any(PageLink.class))).thenReturn(new PageData<>(List.of(profile), 1, 1, false));
+        DeviceCredentials[] saved = new DeviceCredentials[1];
+        when(tbClient.saveDeviceWithCredentials(any(), any())).thenAnswer(inv -> {
+            saved[0] = inv.getArgument(1);
+            Device device = inv.getArgument(0);
+            device.setId(new DeviceId(UUID.randomUUID()));
+            return Optional.of(device);
+        });
+        when(tbClient.getDeviceCredentialsByDeviceId(any())).thenAnswer(inv -> Optional.of(saved[0]));
+        TransportMonitoringTarget target = new TransportMonitoringTarget();
+        target.setBaseUrl(baseUrl);
+
+        entityService.checkEntities(new Lwm2mTransportMonitoringConfig(), target);
+
+        DeviceCredentials credentials = target.getDevice().getCredentials();
+        LwM2MClientCredential client = JacksonUtil.fromString(credentials.getCredentialsValue(), LwM2MDeviceCredentials.class).getClient();
+        assertThat(client.getEndpoint()).isEqualTo(credentials.getCredentialsId());
+        if (baseUrl.startsWith("coaps://")) {
+            // ThingsBoard keys PSK devices by identity, so it must match the endpoint the checker registers with
+            PSKClientCredential psk = (PSKClientCredential) client;
+            assertThat(psk.getIdentity()).isEqualTo(credentials.getCredentialsId());
+            assertThat(psk.getKey()).matches("[0-9a-f]{64}");
+        } else {
+            assertThat(client.getSecurityConfigClientMode()).isEqualTo(LwM2MSecurityMode.NO_SEC);
+        }
     }
 
 }

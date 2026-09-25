@@ -19,6 +19,7 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.codec.DecoderException;
 import org.apache.commons.lang3.StringUtils;
 import org.eclipse.californium.core.config.CoapConfig;
 import org.eclipse.californium.elements.config.Configuration;
@@ -52,14 +53,17 @@ import org.eclipse.leshan.core.request.RegisterRequest;
 import org.eclipse.leshan.core.request.UpdateRequest;
 import org.eclipse.leshan.core.response.ReadResponse;
 import org.thingsboard.monitoring.util.ResourceUtils;
+import org.thingsboard.server.common.data.device.credentials.lwm2m.PSKClientCredential;
 
 import javax.security.auth.Destroyable;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.eclipse.leshan.client.object.Security.noSec;
+import static org.eclipse.leshan.client.object.Security.psk;
 import static org.eclipse.leshan.core.LwM2mId.ACCESS_CONTROL;
 import static org.eclipse.leshan.core.LwM2mId.DEVICE;
 import static org.eclipse.leshan.core.LwM2mId.SECURITY;
@@ -78,23 +82,28 @@ public class Lwm2mClient extends BaseInstanceEnabler implements Destroyable {
 
     private String serverUri;
     private String endpoint;
+    private PSKClientCredential pskCredential;
 
-    public Lwm2mClient(String serverUri, String endpoint) {
+    // pskCredential is null for NoSec
+    public Lwm2mClient(String serverUri, String endpoint, PSKClientCredential pskCredential) {
         this.serverUri = serverUri;
         this.endpoint = endpoint;
+        this.pskCredential = pskCredential;
     }
 
     public Lwm2mClient() {
     }
 
-    public void initClient() throws InvalidDDFFileException, IOException {
+    public void initClient() throws InvalidDDFFileException, IOException, DecoderException {
         String[] resources = new String[]{"0.xml", "1.xml", "2.xml", "test-model.xml"};
         List<ObjectModel> models = new ArrayList<>();
         for (String resourceName : resources) {
             models.addAll(ObjectLoader.loadDdfFile(ResourceUtils.getResourceAsStream("lwm2m/models/" + resourceName), resourceName));
         }
 
-        Security security = noSec(serverUri, 123);
+        Security security = pskCredential != null
+                ? psk(serverUri, 123, pskCredential.getIdentity().getBytes(StandardCharsets.UTF_8), pskCredential.getDecoded())
+                : noSec(serverUri, 123);
         Configuration coapConfig = new Configuration();
         String portStr = StringUtils.substringAfterLast(serverUri, ":");
         if (StringUtils.isNotEmpty(portStr)) {

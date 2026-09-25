@@ -19,11 +19,16 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Service;
+import org.thingsboard.common.util.JacksonUtil;
 import org.thingsboard.monitoring.client.Lwm2mClient;
 import org.thingsboard.monitoring.config.transport.Lwm2mTransportMonitoringConfig;
 import org.thingsboard.monitoring.config.transport.TransportMonitoringTarget;
 import org.thingsboard.monitoring.config.transport.TransportType;
 import org.thingsboard.monitoring.service.transport.TransportHealthChecker;
+import org.thingsboard.server.common.data.device.credentials.lwm2m.LwM2MClientCredential;
+import org.thingsboard.server.common.data.device.credentials.lwm2m.LwM2MDeviceCredentials;
+import org.thingsboard.server.common.data.device.credentials.lwm2m.PSKClientCredential;
+import org.thingsboard.server.common.data.security.DeviceCredentials;
 
 @Service
 @Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
@@ -39,8 +44,10 @@ public class Lwm2mTransportHealthChecker extends TransportHealthChecker<Lwm2mTra
     @Override
     protected void initClient() throws Exception {
         if (lwm2mClient == null || lwm2mClient.getLeshanClient() == null || lwm2mClient.isDestroyed()) {
-            String endpoint = target.getDevice().getCredentials().getCredentialsId();
-            lwm2mClient = new Lwm2mClient(target.getBaseUrl(), endpoint);
+            DeviceCredentials credentials = target.getDevice().getCredentials();
+            String endpoint = credentials.getCredentialsId();
+            LwM2MClientCredential clientCredential = JacksonUtil.fromString(credentials.getCredentialsValue(), LwM2MDeviceCredentials.class).getClient();
+            lwm2mClient = new Lwm2mClient(target.getBaseUrl(), endpoint, clientCredential instanceof PSKClientCredential psk ? psk : null);
             lwm2mClient.initClient();
             log.debug("Initialized LwM2M client for endpoint '{}'", endpoint);
         }
