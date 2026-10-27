@@ -58,6 +58,10 @@ public abstract class BaseHealthChecker<C extends MonitoringConfig, T extends Mo
     @Value("${monitoring.check_timeout_ms}")
     private int resultCheckTimeoutMs;
 
+    protected final void reportRpcLatency(long latencyNanos) {
+        reporter.reportLatency(Latencies.rpcRoundTrip(getKey()), latencyNanos);
+    }
+
     @Getter
     private final Map<String, BaseHealthChecker<C, T>> associates = new HashMap<>();
 
@@ -98,6 +102,15 @@ public abstract class BaseHealthChecker<C extends MonitoringConfig, T extends Mo
         } finally {
             probeMetricsRecorder.recordProbe(info, success);
         }
+        // only once the uplink is proven, and under its own key, so RPC alerts and recovers independently
+        Object rpcInfo = getRpcInfo();
+        if (rpcInfo != null) {
+            if (success) {
+                checkRpc(rpcInfo);
+            } else {
+                probeMetricsRecorder.removeProbe(rpcInfo, ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE);
+            }
+        }
 
         associates.values().forEach(healthChecker -> {
             healthChecker.check(wsClient);
@@ -135,6 +148,22 @@ public abstract class BaseHealthChecker<C extends MonitoringConfig, T extends Mo
 
         log.trace("[{}] Waiting for WS update", info);
         checkWsUpdates(wsClient, testValue);
+    }
+
+    private void checkRpc(Object rpcInfo) {
+        boolean rpcSuccess = false;
+        try {
+            initRpc();
+            doRpcCheck();
+            reporter.serviceIsOk(rpcInfo);
+            rpcSuccess = true;
+        } catch (ServiceFailureException e) {
+            reporter.serviceFailure(e.getServiceKey(), e);
+        } catch (Exception e) {
+            reporter.serviceFailure(rpcInfo, e);
+        } finally {
+            probeMetricsRecorder.recordProbe(rpcInfo, rpcSuccess);
+        }
     }
 
     private Object acceptedProbeKey() {
@@ -218,6 +247,18 @@ public abstract class BaseHealthChecker<C extends MonitoringConfig, T extends Mo
     protected abstract String createTestPayload(String testValue, String telemetryKey);
 
     protected abstract void sendTestPayload(String payload) throws Exception;
+
+    // null when the RPC sub-check is disabled
+    protected Object getRpcInfo() {
+        return null;
+    }
+
+    // RPC-side client setup, kept out of initClient() so its failures are reported under the RPC key
+    protected void initRpc() throws Exception {
+    }
+
+    protected void doRpcCheck() throws Exception {
+    }
 
     // overridable so a transport whose regular send doesn't guarantee delivery confirmation (e.g. MQTT at QoS 0) can force one here
     protected void sendAcceptedTestPayload(String payload) throws Exception {

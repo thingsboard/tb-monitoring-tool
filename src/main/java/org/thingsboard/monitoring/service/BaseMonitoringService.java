@@ -408,6 +408,10 @@ public abstract class BaseMonitoringService<C extends MonitoringConfig<T>, T ext
 
     private void clearProbeMetricsFor(BaseHealthChecker<C, T> healthChecker) {
         probeMetricsRecorder.removeProbe(healthChecker.getCachedInfo(), ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE);
+        Object rpcInfo = healthChecker.getRpcInfo();
+        if (rpcInfo != null) {
+            probeMetricsRecorder.removeProbe(rpcInfo, ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE);
+        }
         healthChecker.getAssociates().values().forEach(this::clearProbeMetricsFor);
     }
 

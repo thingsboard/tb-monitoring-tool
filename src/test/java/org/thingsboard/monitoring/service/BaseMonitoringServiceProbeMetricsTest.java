@@ -194,6 +194,17 @@ public class BaseMonitoringServiceProbeMetricsTest {
     }
 
     @Test
+    public void loginFailure_clearsRpcProbeMetric() throws Exception {
+        Object rpcInfo = new Object();
+        when(healthChecker.getRpcInfo()).thenReturn(rpcInfo);
+        givenLoginFails();
+
+        service.runChecks();
+
+        verify(probeMetricsRecorder, times(1)).removeProbe(rpcInfo, ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE);
+    }
+
+    @Test
     public void loginFailure_clearsTransportProbeMetrics() throws Exception {
         // transport checks never ran this cycle - their gauges must not keep reporting last cycle's value
         Object transportInfo = new Object();

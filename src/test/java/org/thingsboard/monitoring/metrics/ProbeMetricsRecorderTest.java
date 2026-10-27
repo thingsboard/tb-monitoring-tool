@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.thingsboard.monitoring.config.integration.IntegrationInfo;
 import org.thingsboard.monitoring.config.integration.IntegrationType;
+import org.thingsboard.monitoring.config.transport.RpcInfo;
 import org.thingsboard.monitoring.config.transport.TransportInfo;
 import org.thingsboard.monitoring.config.transport.TransportMonitoringTarget;
 import org.thingsboard.monitoring.config.transport.TransportType;
@@ -96,6 +97,25 @@ public class ProbeMetricsRecorderTest {
         assertThat(registry.get("probe_success")
                 .tags("check", "ihttp", "endpoint", "acme.example.com:80").gauge().value()).isEqualTo(0d);
         assertThat(registry.getMeters()).hasSize(2); // distinct series, transport probe untouched by the integration one
+    }
+
+    @Test
+    public void rpcProbe_usesRpcKindAndDoesNotCollideWithTransportProbe() {
+        ProbeMetricsRecorder recorder = recorder(true);
+        TransportInfo transport = transportInfo(TransportType.MQTT, "tcp://acme.example.com:1883");
+        recorder.recordProbe(transport, true);
+        recorder.recordProbe(new RpcInfo(transport), false);
+
+        assertThat(registry.get("probe_success")
+                .tags("check", "mqtt", "kind", "probe").gauge().value()).isEqualTo(1d);
+        assertThat(registry.get("probe_success")
+                .tags("check", "mqtt", "kind", "rpc").gauge().value()).isEqualTo(0d);
+
+        recorder.startCycle();
+        recorder.removeProbe(new RpcInfo(transport), ProbeMetricsRecorder.Removal.STALE_THIS_CYCLE);
+
+        assertThat(registry.find("probe_success").tags("kind", "rpc").gauge()).isNull();
+        assertThat(registry.get("probe_success").tags("kind", "probe").gauge().value()).isEqualTo(1d);
     }
 
     @Test

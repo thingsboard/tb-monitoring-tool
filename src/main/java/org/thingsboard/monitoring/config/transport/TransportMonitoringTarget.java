@@ -25,9 +25,14 @@ import org.thingsboard.monitoring.config.BaseMonitoringTarget;
 public class TransportMonitoringTarget extends BaseMonitoringTarget {
 
     private String queue;
+    private RpcCheckConfig rpc;
 
     public String getQueue() {
         return StringUtils.defaultIfEmpty(queue, "Main");
+    }
+
+    public boolean isRpcEnabled() {
+        return rpc != null && rpc.isEnabled();
     }
 
 }

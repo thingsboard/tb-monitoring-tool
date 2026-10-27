@@ -30,4 +30,8 @@ public class Latencies {
         return String.format("%sWsUpdate", key);
     }
 
+    public static String rpcRoundTrip(String key) {
+        return String.format("%sRpcRoundTrip", key);
+    }
+
 }

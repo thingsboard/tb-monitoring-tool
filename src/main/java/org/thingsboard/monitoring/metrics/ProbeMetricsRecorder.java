@@ -23,6 +23,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.thingsboard.monitoring.config.integration.IntegrationInfo;
 import org.thingsboard.monitoring.config.integration.IntegrationType;
+import org.thingsboard.monitoring.config.transport.RpcInfo;
 import org.thingsboard.monitoring.config.transport.TransportInfo;
 import org.thingsboard.monitoring.data.MonitoredServiceKey;
 
@@ -43,6 +44,7 @@ public class ProbeMetricsRecorder {
     public static final String MONITORING_HEARTBEAT_METRIC = "tb_monitoring_last_run_timestamp_seconds";
     private static final String KIND_PROBE = "probe";
     private static final String KIND_ACCEPTED = "accepted";
+    private static final String KIND_RPC = "rpc";
 
     // shared with BaseHealthChecker/BaseMonitoringService/WsClientFactory to avoid literal drift
     public static final String ACTION_REQUEST = "request";
@@ -276,6 +278,10 @@ public class ProbeMetricsRecorder {
         if (serviceKey instanceof TransportInfo transportInfo) {
             return tagsFor(ProbeKey.of(transportInfo),
                     () -> ProbeLabelResolver.resolveTransportLabels(transportInfo.getType(), transportInfo.getTarget().getBaseUrl()), KIND_PROBE);
+        } else if (serviceKey instanceof RpcInfo rpcInfo) {
+            TransportInfo transportInfo = rpcInfo.getTransportInfo();
+            return tagsFor(ProbeKey.of(transportInfo),
+                    () -> ProbeLabelResolver.resolveTransportLabels(transportInfo.getType(), transportInfo.getTarget().getBaseUrl()), KIND_RPC);
         } else if (serviceKey instanceof IntegrationInfo integrationInfo) {
             return tagsFor(ProbeKey.of(integrationInfo),
                     () -> ProbeLabelResolver.resolveIntegrationLabels(integrationInfo.getType(), integrationInfo.getBaseUrl()), KIND_PROBE);
